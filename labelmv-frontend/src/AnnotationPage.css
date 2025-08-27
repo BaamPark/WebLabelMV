@@ -1,0 +1,49 @@
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+}
+
+.annotation-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.header {
+  background-color: #f8f9fa;
+  padding: 10px;
+  border-bottom: 1px solid #ddd;
+}
+
+.content {
+  display: flex;
+  flex: 1;
+}
+
+.sidebar-left, .sidebar-right {
+  width: 200px;
+  background-color: #f8f9fa;
+  padding: 10px;
+  border-right: 1px solid #ddd;
+}
+
+.sidebar-right {
+  border-right: none;
+  border-left: 1px solid #ddd;
+}
+
+.center-content {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: #fff;
+  border-left: 1px solid #ddd;
+  border-right: 1px solid #ddd;
+}
+
+.placeholder {
+  text-align: center;
+  color: #6c757d;
+}
