@@ -3,8 +3,7 @@ import './AnnotationPage.css';
 
 const AnnotationPage = () => {
   const [isDrawing, setIsDrawing] = useState(false);
-  const [startPoint, setStartPoint] = useState({ x: 0, y: 0 });
-  const [boundingBox, setBoundingBox] = useState(null);
+  const [boundingBoxes, setBoundingBoxes] = useState([]);
 
   const handleMouseDown = (e) => {
     if (e.button !== 0) return; // Only left mouse button
@@ -13,13 +12,16 @@ const AnnotationPage = () => {
     const y = e.clientY - rect.top;
 
     setIsDrawing(true);
-    setStartPoint({ x, y });
-    setBoundingBox({
-      left: x,
-      top: y,
-      width: 0,
-      height: 0
-    });
+    setBoundingBoxes(prev => [
+      ...prev,
+      {
+        id: Date.now(), // Unique ID for each bounding box
+        left: x,
+        top: y,
+        width: 0,
+        height: 0
+      }
+    ]);
   };
 
   const handleMouseMove = (e) => {
@@ -29,18 +31,28 @@ const AnnotationPage = () => {
     let x = e.clientX - rect.left;
     let y = e.clientY - rect.top;
 
-    setBoundingBox(prev => ({
-      left: Math.min(prev.left, x),
-      top: Math.min(prev.top, y),
-      width: Math.abs(x - prev.left),
-      height: Math.abs(y - prev.top)
-    }));
+    setBoundingBoxes(prev => {
+      const newBoxes = [...prev];
+      const lastBox = newBoxes[newBoxes.length - 1];
+      newBoxes[newBoxes.length - 1] = {
+        ...lastBox,
+        left: Math.min(lastBox.left, x),
+        top: Math.min(lastBox.top, y),
+        width: Math.abs(x - lastBox.left),
+        height: Math.abs(y - lastBox.top)
+      };
+      return newBoxes;
+    });
   };
 
   const handleMouseUp = () => {
     if (isDrawing) {
       setIsDrawing(false);
     }
+  };
+
+  const removeLastBoundingBox = () => {
+    setBoundingBoxes(prev => prev.slice(0, -1));
   };
 
   return (
@@ -62,6 +74,13 @@ const AnnotationPage = () => {
           >
             Draw Bounding Box
           </button>
+          <button
+            className="btn btn-danger"
+            onClick={removeLastBoundingBox}
+            disabled={boundingBoxes.length === 0}
+          >
+            Remove Last Bounding Box
+          </button>
           <button className="btn btn-secondary" disabled>Select Tool</button>
           <button className="btn btn-success" disabled>Save Annotation</button>
         </aside>
@@ -75,17 +94,18 @@ const AnnotationPage = () => {
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
           >
-            {boundingBox && (
+            {boundingBoxes.map(box => (
               <div
+                key={box.id}
                 className="bounding-box"
                 style={{
-                  left: boundingBox.left,
-                  top: boundingBox.top,
-                  width: boundingBox.width,
-                  height: boundingBox.height
+                  left: box.left,
+                  top: box.top,
+                  width: box.width,
+                  height: box.height
                 }}
               />
-            )}
+            ))}
             <div className="video-placeholder placeholder">
               <h4>Video/Image Display Area</h4>
               <p>Video or image will be displayed here</p>
@@ -97,9 +117,9 @@ const AnnotationPage = () => {
         <aside className="sidebar-right">
           <h3>Annotations</h3>
           <ul className="annotation-list placeholder">
-            <li>Annotation 1</li>
-            <li>Annotation 2</li>
-            <li>Annotation 3</li>
+            {boundingBoxes.map((box, index) => (
+              <li key={box.id}>Bounding Box {index + 1}: [{box.left}, {box.top}] - [{box.width}x{box.height}]</li>
+            ))}
           </ul>
         </aside>
       </div>
