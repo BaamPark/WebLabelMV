@@ -2,11 +2,23 @@ import React, { useState } from 'react';
 import './AnnotationPage.css';
 
 const AnnotationPage = () => {
-  const [isDrawing, setIsDrawing] = useState(false);
+  const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
   const [boundingBoxes, setBoundingBoxes] = useState([]);
+  const [isDrawing, setIsDrawing] = useState(false);
+
+  const handleDrawButtonClick = () => {
+    if (isDrawingEnabled) {
+      // If drawing is already enabled, disable it
+      setIsDrawingEnabled(false);
+    } else {
+      // Otherwise enable drawing mode
+      setIsDrawingEnabled(true);
+      alert("Draw bounding box tool activated - click and drag to draw");
+    }
+  };
 
   const handleMouseDown = (e) => {
-    if (e.button !== 0) return; // Only left mouse button
+    if (!isDrawingEnabled || e.button !== 0) return; // Only left mouse button when drawing is enabled
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -25,7 +37,7 @@ const AnnotationPage = () => {
   };
 
   const handleMouseMove = (e) => {
-    if (!isDrawing) return;
+    if (!isDrawingEnabled || !isDrawing) return;
 
     const rect = e.currentTarget.getBoundingClientRect();
     let x = e.clientX - rect.left;
@@ -48,6 +60,8 @@ const AnnotationPage = () => {
   const handleMouseUp = () => {
     if (isDrawing) {
       setIsDrawing(false);
+      // Automatically disable drawing mode after a box is drawn
+      setIsDrawingEnabled(false);
     }
   };
 
@@ -69,10 +83,10 @@ const AnnotationPage = () => {
         <aside className="sidebar-left">
           <h3>Tools</h3>
           <button
-            className="btn btn-primary"
-            onClick={() => alert("Draw bounding box tool activated")}
+            className={`btn ${isDrawingEnabled ? 'btn-warning' : 'btn-primary'}`}
+            onClick={handleDrawButtonClick}
           >
-            Draw Bounding Box
+            {isDrawingEnabled ? "Drawing Enabled" : "Draw Bounding Box"}
           </button>
           <button
             className="btn btn-danger"
