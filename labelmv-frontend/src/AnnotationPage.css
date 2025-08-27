@@ -25,6 +25,7 @@ body {
   background-color: #f8f9fa;
   padding: 10px;
   border-right: 1px solid #ddd;
+  overflow-y: auto;
 }
 
 .sidebar-right {
@@ -41,22 +42,31 @@ body {
   border-left: 1px solid #ddd;
   border-right: 1px solid #ddd;
   position: relative;
+  overflow: hidden; /* Ensure bounding boxes don't overflow */
 }
 
 .video-container {
-  width: 80%;
-  height: 80%;
+  width: 95%;
+  height: 95%;
   position: relative;
   background-color: #e9ecef;
+  cursor: crosshair;
 }
 
 .placeholder {
   text-align: center;
   color: #6c757d;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1; /* Ensure placeholder is above bounding boxes */
 }
 
 .bounding-box {
   position: absolute;
   border: 2px solid red;
-  pointer-events: none;
+  background-color: rgba(255, 0, 0, 0.2);
+  pointer-events: all; /* Make sure the box can receive mouse events */
+  cursor: move;
 }

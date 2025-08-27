@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import './AnnotationPage.css';
 
 const AnnotationPage = () => {
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
   const [boundingBoxes, setBoundingBoxes] = useState([]);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [draggingBoxId, setDraggingBoxId] = useState(null);
+
+  const containerRef = useRef(null);
 
   const handleDrawButtonClick = () => {
     if (isDrawingEnabled) {
@@ -19,7 +22,8 @@ const AnnotationPage = () => {
 
   const handleMouseDown = (e) => {
     if (!isDrawingEnabled || e.button !== 0) return; // Only left mouse button when drawing is enabled
-    const rect = e.currentTarget.getBoundingClientRect();
+
+    const rect = containerRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
@@ -28,8 +32,8 @@ const AnnotationPage = () => {
       ...prev,
       {
         id: Date.now(), // Unique ID for each bounding box
-        left: x,
-        top: y,
+        left: (x / rect.width) * 100, // Store as percentage of container width
+        top: (y / rect.height) * 100, // Store as percentage of container height
         width: 0,
         height: 0
       }
@@ -39,7 +43,7 @@ const AnnotationPage = () => {
   const handleMouseMove = (e) => {
     if (!isDrawingEnabled || !isDrawing) return;
 
-    const rect = e.currentTarget.getBoundingClientRect();
+    const rect = containerRef.current.getBoundingClientRect();
     let x = e.clientX - rect.left;
     let y = e.clientY - rect.top;
 
@@ -48,10 +52,10 @@ const AnnotationPage = () => {
       const lastBox = newBoxes[newBoxes.length - 1];
       newBoxes[newBoxes.length - 1] = {
         ...lastBox,
-        left: Math.min(lastBox.left, x),
-        top: Math.min(lastBox.top, y),
-        width: Math.abs(x - lastBox.left),
-        height: Math.abs(y - lastBox.top)
+        left: Math.min(lastBox.left, (x / rect.width) * 100),
+        top: Math.min(lastBox.top, (y / rect.height) * 100),
+        width: Math.abs((x / rect.width) * 100 - lastBox.left),
+        height: Math.abs((y / rect.height) * 100 - lastBox.top)
       };
       return newBoxes;
     });
@@ -65,12 +69,49 @@ const AnnotationPage = () => {
     }
   };
 
+  const handleBoxMouseDown = (e, boxId) => {
+    e.stopPropagation(); // Prevent triggering container mouse events
+
+    if (!isDrawingEnabled && e.button === 0) { // Only left mouse button when not drawing
+      setDraggingBoxId(boxId);
+    }
+  };
+
+  const handleBoxMouseMove = (e) => {
+    if (draggingBoxId !== null) {
+      const rect = containerRef.current.getBoundingClientRect();
+      let x = e.clientX - rect.left;
+      let y = e.clientY - rect.top;
+
+      setBoundingBoxes(prev => prev.map(box =>
+        box.id === draggingBoxId
+          ? {
+              ...box,
+              left: (x / rect.width) * 100, // Update position as percentage of container size
+              top: (y / rect.height) * 100
+            }
+          : box
+      ));
+    }
+  };
+
+  const handleBoxMouseUp = () => {
+    if (draggingBoxId !== null) {
+      setDraggingBoxId(null);
+    }
+  };
+
   const removeLastBoundingBox = () => {
     setBoundingBoxes(prev => prev.slice(0, -1));
   };
 
   return (
-    <div className="annotation-page">
+    <div
+      className="annotation-page"
+      onMouseMove={handleBoxMouseMove}
+      onMouseUp={handleBoxMouseUp}
+      onMouseLeave={handleBoxMouseUp}
+    >
       {/* Header for video progress bar */}
       <header className="header">
         <h2>Video Progress Bar</h2>
@@ -102,9 +143,10 @@ const AnnotationPage = () => {
         {/* Center area for video/image display */}
         <div className="center-content">
           <div
+            ref={containerRef}
             className="video-container"
             onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
+            onMouseMove={isDrawing ? handleMouseMove : undefined}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
           >
@@ -113,11 +155,12 @@ const AnnotationPage = () => {
                 key={box.id}
                 className="bounding-box"
                 style={{
-                  left: box.left,
-                  top: box.top,
-                  width: box.width,
-                  height: box.height
+                  left: `${box.left}%`,
+                  top: `${box.top}%`,
+                  width: `${box.width}%`,
+                  height: `${box.height}%`
                 }}
+                onMouseDown={(e) => handleBoxMouseDown(e, box.id)}
               />
             ))}
             <div className="video-placeholder placeholder">
@@ -132,7 +175,7 @@ const AnnotationPage = () => {
           <h3>Annotations</h3>
           <ul className="annotation-list placeholder">
             {boundingBoxes.map((box, index) => (
-              <li key={box.id}>Bounding Box {index + 1}: [{box.left}, {box.top}] - [{box.width}x{box.height}]</li>
+              <li key={box.id}>Bounding Box {index + 1}: [{box.left}%, {box.top}%] - [{box.width}% x {box.height}%</li>
             ))}
           </ul>
         </aside>
