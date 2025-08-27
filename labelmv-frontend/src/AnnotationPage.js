@@ -6,6 +6,7 @@ const AnnotationPage = () => {
   const [boundingBoxes, setBoundingBoxes] = useState([]);
   const [isDrawing, setIsDrawing] = useState(false);
   const [draggingBoxId, setDraggingBoxId] = useState(null);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
 
   const containerRef = useRef(null);
 
@@ -69,11 +70,18 @@ const AnnotationPage = () => {
     }
   };
 
-  const handleBoxMouseDown = (e, boxId) => {
+  const handleBoxMouseDown = (e, boxId, box) => {
     e.stopPropagation(); // Prevent triggering container mouse events
 
     if (!isDrawingEnabled && e.button === 0) { // Only left mouse button when not drawing
+      const rect = containerRef.current.getBoundingClientRect();
+
+      // Calculate offset from click position to top-left corner of the bounding box
+      const offsetX = ((e.clientX - rect.left) / rect.width * 100) - box.left;
+      const offsetY = ((e.clientY - rect.top) / rect.height * 100) - box.top;
+
       setDraggingBoxId(boxId);
+      setDragOffset({ x: offsetX, y: offsetY });
     }
   };
 
@@ -83,12 +91,16 @@ const AnnotationPage = () => {
       let x = e.clientX - rect.left;
       let y = e.clientY - rect.top;
 
+      // Calculate new position based on offset
+      const newLeft = ((x / rect.width) * 100) - dragOffset.x;
+      const newTop = ((y / rect.height) * 100) - dragOffset.y;
+
       setBoundingBoxes(prev => prev.map(box =>
         box.id === draggingBoxId
           ? {
               ...box,
-              left: (x / rect.width) * 100, // Update position as percentage of container size
-              top: (y / rect.height) * 100
+              left: Math.max(0, Math.min(100, newLeft)), // Clamp to container bounds
+              top: Math.max(0, Math.min(100, newTop))
             }
           : box
       ));
@@ -160,7 +172,7 @@ const AnnotationPage = () => {
                   width: `${box.width}%`,
                   height: `${box.height}%`
                 }}
-                onMouseDown={(e) => handleBoxMouseDown(e, box.id)}
+                onMouseDown={(e) => handleBoxMouseDown(e, box.id, box)}
               />
             ))}
             <div className="video-placeholder placeholder">
