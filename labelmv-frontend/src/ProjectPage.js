@@ -2,23 +2,42 @@ import "./ProjectPage.css";
 import React, { useState } from 'react';
 
 const ProjectPage = () => {
+  const [videoDirectory, setVideoDirectory] = useState('');
+  const [availableVideos, setAvailableVideos] = useState([]);
   const [numVideos, setNumVideos] = useState(1);
-  const [videoFiles, setVideoFiles] = useState(Array(numVideos).fill(null));
+  const [selectedVideos, setSelectedVideos] = useState(Array(numVideos).fill(null));
   const [frameRate, setFrameRate] = useState(1);
 
+  // Step 1: Set video directory and fetch videos
+  const handleSetPathClick = () => {
+    fetch(`http://localhost:56250/videos?directory=${encodeURIComponent(videoDirectory)}`)
+      .then(response => response.json())
+      .then(data => {
+        if (data.error) {
+          console.error('Error fetching videos:', data.error);
+        } else {
+          setAvailableVideos(data);
+        }
+      })
+      .catch(error => console.error('Error fetching videos:', error));
+  };
+
+  // Step 2: Set number of videos
   const handleNumVideosChange = (e) => {
     const count = parseInt(e.target.value);
     setNumVideos(count);
-    // Initialize video files array with null values
-    setVideoFiles(Array(count).fill(null));
+    // Initialize selected videos array with null values
+    setSelectedVideos(Array(count).fill(null));
   };
 
+  // Step 3: Select a video
   const handleVideoChange = (index, e) => {
-    const newFiles = [...videoFiles];
-    newFiles[index] = e.target.files[0];
-    setVideoFiles(newFiles);
+    const newSelection = [...selectedVideos];
+    newSelection[index] = e.target.value;
+    setSelectedVideos(newSelection);
   };
 
+  // Step 4: Set frame rate
   const handleFrameRateChange = (e) => {
     setFrameRate(parseInt(e.target.value));
   };
@@ -27,40 +46,65 @@ const ProjectPage = () => {
     <div className="project-page">
       <h1>LabelMV Project Page</h1>
 
+      {/* Step 1: Video Directory */}
       <section>
-        <h2>Number of Videos</h2>
-        <select value={numVideos} onChange={handleNumVideosChange}>
-          {[...Array(10).keys()].map((i) => (
-            <option key={i + 1} value={i + 1}>{i + 1}</option>
-          ))}
-        </select>
-      </section>
-
-      <section>
-        <h2>Upload Videos</h2>
-        {Array.from({ length: numVideos }, (_, i) => (
-          <div key={i}>
-            <label htmlFor={`video-${i}`}>Choose video {i + 1}</label>
-            <input
-              id={`video-${i}`}
-              type="file"
-              accept="video/*"
-              onChange={(e) => handleVideoChange(i, e)}
-            />
-          </div>
-        ))}
-      </section>
-
-      <section>
-        <h2>Set Frame Rate</h2>
+        <h2>Video Directory</h2>
         <input
-          type="number"
-          value={frameRate}
-          onChange={handleFrameRateChange}
-          min="1"
+          type="text"
+          value={videoDirectory}
+          onChange={(e) => setVideoDirectory(e.target.value)}
+          placeholder="Enter path to video directory"
         />
-        <p>Frames per second (FPS): {frameRate}</p>
+        <button onClick={handleSetPathClick}>Set Path</button>
       </section>
+
+      {/* Step 2: Number of Videos (shown after setting path) */}
+      {availableVideos.length > 0 && (
+        <section>
+          <h2>Number of Videos</h2>
+          <select value={numVideos} onChange={handleNumVideosChange}>
+            {[...Array(10).keys()].map((i) => (
+              <option key={i + 1} value={i + 1}>{i + 1}</option>
+            ))}
+          </select>
+        </section>
+      )}
+
+      {/* Step 3: Select Videos (shown after setting number of videos) */}
+      {numVideos > 0 && availableVideos.length > 0 && (
+        <section>
+          <h2>Select Videos</h2>
+          {Array.from({ length: numVideos }, (_, i) => (
+            <div key={i}>
+              <label htmlFor={`video-${i}`}>Video {i + 1}</label>
+              <select
+                id={`video-${i}`}
+                value={selectedVideos[i] || ''}
+                onChange={(e) => handleVideoChange(i, e)}
+              >
+                <option value="">Select a video</option>
+                {availableVideos.map((video, index) => (
+                  <option key={index} value={video}>{video}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {/* Step 4: Set Frame Rate (shown after selecting videos) */}
+      {selectedVideos.length > 0 && selectedVideos.some(video => video !== null) && (
+        <section>
+          <h2>Set Frame Rate</h2>
+          <input
+            type="number"
+            value={frameRate}
+            onChange={handleFrameRateChange}
+            min="1"
+          />
+          <p>Frames per second (FPS): {frameRate}</p>
+        </section>
+      )}
 
     </div>
   );
