@@ -1,5 +1,6 @@
 import "./ProjectPage.css";
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 const ProjectPage = () => {
   const [videoDirectory, setVideoDirectory] = useState('');
@@ -7,6 +8,8 @@ const ProjectPage = () => {
   const [numVideos, setNumVideos] = useState(1);
   const [selectedVideos, setSelectedVideos] = useState(Array(numVideos).fill(null));
   const [frameRate, setFrameRate] = useState(1);
+
+  const navigate = useNavigate();
 
   // Step 1: Set video directory and fetch videos
   const handleSetPathClick = () => {
@@ -40,6 +43,11 @@ const ProjectPage = () => {
   // Step 4: Set frame rate
   const handleFrameRateChange = (e) => {
     setFrameRate(parseInt(e.target.value));
+  };
+
+  // Navigate to annotation page
+  const startAnnotation = () => {
+    navigate('/annotation');
   };
 
   return (
@@ -93,7 +101,7 @@ const ProjectPage = () => {
       )}
 
       {/* Step 4: Set Frame Rate (shown after selecting videos) */}
-      {selectedVideos.length > 0 && selectedVideos.some(video => video !== null) && (
+      {selectedVideos.length > 0 && selectedVideos.every(video => video !== null && video !== '') && (
         <section>
           <h2>Set Frame Rate</h2>
           <input
@@ -106,6 +114,12 @@ const ProjectPage = () => {
         </section>
       )}
 
+      {/* Start Annotation Button (shown after receiving video list) */}
+      {availableVideos.length > 0 && (
+        <section>
+          <button onClick={startAnnotation}>Start Annotation</button>
+        </section>
+      )}
     </div>
   );
 };

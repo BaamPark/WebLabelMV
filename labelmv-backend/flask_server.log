@@ -1,4 +1,4 @@
- * Serving Flask app 'app'
- * Debug mode: on
-Address already in use
-Port 56250 is in use by another program. Either identify and stop that program, or start the server with a different port.
+Traceback (most recent call last):
+  File "/workspace/labelmv-backend/app.py", line 3, in <module>
+    from flask_cors import CORS
+ModuleNotFoundError: No module named 'flask_cors'
