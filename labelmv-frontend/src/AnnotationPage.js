@@ -1,5 +1,10 @@
-import React, { useState, useRef } from 'react';
+
+
+
+
+import React, { useState, useRef, useContext } from 'react';
 import './AnnotationPage.css';
+import { ProjectContext } from './App';
 
 const AnnotationPage = () => {
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
@@ -8,6 +13,10 @@ const AnnotationPage = () => {
   const [draggingBoxId, setDraggingBoxId] = useState(null);
   const [resizingBoxId, setResizingBoxId] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [selectedVideoIndex, setSelectedVideoIndex] = useState(0);
+
+  const { projectData } = useContext(ProjectContext);
+  const { numVideos } = projectData;
 
   const containerRef = useRef(null);
 
@@ -185,6 +194,10 @@ const AnnotationPage = () => {
     return newBox;
   };
 
+  const handleVideoChange = (e) => {
+    setSelectedVideoIndex(parseInt(e.target.value, 10) - 1); // Convert to 0-based index
+  };
+
   return (
     <div
       className="annotation-page"
@@ -282,7 +295,7 @@ const AnnotationPage = () => {
           </div>
         </div>
 
-        {/* Right sidebar for annotation list */}
+        {/* Right sidebar for annotation list and video selection */}
         <aside className="sidebar-right">
           <h3>Annotations</h3>
           <ul className="annotation-list placeholder">
@@ -290,6 +303,16 @@ const AnnotationPage = () => {
               <li key={box.id}>Bounding Box {index + 1}: [{box.left}%, {box.top}%] - [{box.width}% x {box.height}%</li>
             ))}
           </ul>
+
+          {/* Video selection dropdown */}
+          <div className="video-selection">
+            <h4>Select Video</h4>
+            <select value={selectedVideoIndex + 1} onChange={handleVideoChange}>
+              {[...Array(numVideos).keys()].map((i) => (
+                <option key={i} value={i + 1}>video_{i + 1}</option>
+              ))}
+            </select>
+          </div>
         </aside>
       </div>
     </div>
@@ -297,3 +320,5 @@ const AnnotationPage = () => {
 };
 
 export default AnnotationPage;
+
+

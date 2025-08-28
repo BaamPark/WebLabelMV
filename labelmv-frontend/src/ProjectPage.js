@@ -1,6 +1,10 @@
+
+
+
 import "./ProjectPage.css";
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ProjectContext } from './App';
 
 const ProjectPage = () => {
   const [videoDirectory, setVideoDirectory] = useState('');
@@ -8,6 +12,8 @@ const ProjectPage = () => {
   const [numVideos, setNumVideos] = useState(1);
   const [selectedVideos, setSelectedVideos] = useState(Array(numVideos).fill(null));
   const [frameRate, setFrameRate] = useState(1);
+
+  const { setProjectData } = useContext(ProjectContext);
 
   const navigate = useNavigate();
 
@@ -45,8 +51,9 @@ const ProjectPage = () => {
     setFrameRate(parseInt(e.target.value));
   };
 
-  // Navigate to annotation page
+  // Navigate to annotation page and save project data
   const startAnnotation = () => {
+    setProjectData({ numVideos, selectedVideos });
     navigate('/annotation');
   };
 
@@ -125,3 +132,4 @@ const ProjectPage = () => {
 };
 
 export default ProjectPage;
+
