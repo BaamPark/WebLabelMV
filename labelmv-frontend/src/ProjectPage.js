@@ -5,6 +5,7 @@ import "./ProjectPage.css";
 import React, { useState, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ProjectContext } from './App';
+const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:56250';
 
 const ProjectPage = () => {
   const [videoDirectory, setVideoDirectory] = useState('');
@@ -19,7 +20,7 @@ const ProjectPage = () => {
 
   // Step 1: Set video directory and fetch videos
   const handleSetPathClick = () => {
-    fetch(`http://localhost:56250/videos?directory=${encodeURIComponent(videoDirectory)}`)
+    fetch(`${API_BASE}/videos?directory=${encodeURIComponent(videoDirectory)}`)
       .then(response => response.json())
       .then(data => {
         if (data.error) {
