@@ -1,7 +1,5 @@
 
 
-
-
 import React, { useState, useRef, useContext } from 'react';
 import './AnnotationPage.css';
 import { ProjectContext } from './App';
@@ -14,6 +12,7 @@ const AnnotationPage = () => {
   const [resizingBoxId, setResizingBoxId] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [selectedVideoIndex, setSelectedVideoIndex] = useState(0);
+  const [selectedBoxId, setSelectedBoxId] = useState(null); // Track selected box
 
   const { projectData } = useContext(ProjectContext);
   const { numVideos } = projectData;
@@ -92,6 +91,7 @@ const AnnotationPage = () => {
 
       setDraggingBoxId(boxId);
       setDragOffset({ x: offsetX, y: offsetY });
+      setSelectedBoxId(boxId); // Highlight the box when dragging
     }
   };
 
@@ -100,6 +100,7 @@ const AnnotationPage = () => {
 
     if (!isDrawingEnabled && e.button === 0) { // Only left mouse button when not drawing
       setResizingBoxId({ id: boxId, corner });
+      setSelectedBoxId(boxId); // Highlight the box when resizing
     }
   };
 
@@ -123,6 +124,7 @@ const AnnotationPage = () => {
   const handleMouseUpForResize = () => {
     if (resizingBoxId) {
       setResizingBoxId(null);
+      setSelectedBoxId(null); // Unhighlight the box when done resizing
     }
   };
 
@@ -151,6 +153,7 @@ const AnnotationPage = () => {
   const handleBoxMouseUp = () => {
     if (draggingBoxId !== null) {
       setDraggingBoxId(null);
+      setSelectedBoxId(null); // Unhighlight the box when done dragging
     }
   };
 
@@ -198,6 +201,19 @@ const AnnotationPage = () => {
     setSelectedVideoIndex(parseInt(e.target.value, 10) - 1); // Convert to 0-based index
   };
 
+  // Handle box selection from list
+  const handleListItemClick = (boxId) => {
+    setSelectedBoxId(boxId);
+  };
+
+  // Handle delete box from list
+  const handleDeleteBox = (boxId) => {
+    setBoundingBoxes(prev => prev.filter(box => box.id !== boxId));
+    if (selectedBoxId === boxId) {
+      setSelectedBoxId(null); // Unselect the deleted box
+    }
+  };
+
   return (
     <div
       className="annotation-page"
@@ -243,7 +259,7 @@ const AnnotationPage = () => {
             {boundingBoxes.map(box => (
               <React.Fragment key={box.id}>
                 <div
-                  className="bounding-box"
+                  className={`bounding-box ${selectedBoxId === box.id ? 'highlighted' : ''}`}
                   style={{
                     left: `${box.left}%`,
                     top: `${box.top}%`,
@@ -300,7 +316,10 @@ const AnnotationPage = () => {
           <h3>Annotations</h3>
           <ul className="annotation-list placeholder">
             {boundingBoxes.map((box, index) => (
-              <li key={box.id}>Bounding Box {index + 1}: [{box.left}%, {box.top}%] - [{box.width}% x {box.height}%</li>
+              <li key={box.id} onClick={() => handleListItemClick(box.id)}>
+                Bounding Box {index + 1}: [{box.left.toFixed(2)}%, {box.top.toFixed(2)}%] - [{box.width.toFixed(2)}% x {box.height.toFixed(2)}%]
+                <i className="bi bi-trash float-right" onClick={(e) => {e.stopPropagation(); handleDeleteBox(box.id);}}></i>
+              </li>
             ))}
           </ul>
 
@@ -320,5 +339,4 @@ const AnnotationPage = () => {
 };
 
 export default AnnotationPage;
-
 

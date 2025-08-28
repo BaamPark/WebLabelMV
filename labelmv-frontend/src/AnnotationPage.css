@@ -1,5 +1,6 @@
 
 
+
 body {
   margin: 0;
   font-family: Arial, sans-serif;
@@ -82,9 +83,13 @@ body {
 .bounding-box {
   position: absolute;
   border: 2px solid red;
-  background-color: rgba(255, 0, 0, 0.2);
+  background-color: rgba(255, 0, 0, 0); /* Transparent by default */
   pointer-events: all; /* Make sure the box can receive mouse events */
   cursor: move;
+}
+
+.bounding-box.highlighted {
+  background-color: rgba(255, 0, 0, 0.3); /* Fill with red when highlighted */
 }
 
 .resize-handle {
@@ -127,4 +132,19 @@ body {
   transform: translate(50%, 50%);
   cursor: nwse-resize;
 }
+
+.annotation-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  margin-bottom: 5px;
+}
+
+.annotation-list .bi-trash {
+  cursor: pointer;
+  color: #dc3545; /* Red color for trash icon */
+  margin-left: 10px;
+}
+
 
