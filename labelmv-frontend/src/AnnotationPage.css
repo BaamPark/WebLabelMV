@@ -50,6 +50,7 @@ body {
 
 .video-selection {
   margin-top: 20px;
+  margin-bottom: 15px; /* Add space between video selection and annotation list */
 }
 
 .video-selection h4 {

@@ -311,18 +311,8 @@ const AnnotationPage = () => {
           </div>
         </div>
 
-        {/* Right sidebar for annotation list and video selection */}
+        {/* Right sidebar for video selection and annotation list */}
         <aside className="sidebar-right">
-          <h3>Annotations</h3>
-          <ul className="annotation-list placeholder">
-            {boundingBoxes.map((box, index) => (
-              <li key={box.id} onClick={() => handleListItemClick(box.id)}>
-                Bounding Box {index + 1}: [{box.left.toFixed(2)}%, {box.top.toFixed(2)}%] - [{box.width.toFixed(2)}% x {box.height.toFixed(2)}%]
-                <i className="bi bi-trash float-right" onClick={(e) => {e.stopPropagation(); handleDeleteBox(box.id);}}></i>
-              </li>
-            ))}
-          </ul>
-
           {/* Video selection dropdown */}
           <div className="video-selection">
             <h4>Select Video</h4>
@@ -332,6 +322,17 @@ const AnnotationPage = () => {
               ))}
             </select>
           </div>
+
+          {/* Annotations list */}
+          <h3>Annotations</h3>
+          <ul className="annotation-list placeholder">
+            {boundingBoxes.map((box, index) => (
+              <li key={box.id} onClick={() => handleListItemClick(box.id)}>
+                Bounding Box {index + 1}: [{box.left.toFixed(2)}%, {box.top.toFixed(2)}%] - [{box.width.toFixed(2)}% x {box.height.toFixed(2)}%]
+                <i className="bi bi-trash float-right" onClick={(e) => {e.stopPropagation(); handleDeleteBox(box.id);}}></i>
+              </li>
+            ))}
+          </ul>
         </aside>
       </div>
     </div>
