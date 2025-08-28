@@ -4,6 +4,7 @@ import React, { useState, useRef, useContext, useEffect } from 'react';
 import './AnnotationPage.css';
 import { ProjectContext } from './App';
 
+const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:56250';
 const AnnotationPage = () => {
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
   const [boundingBoxes, setBoundingBoxes] = useState([]);
@@ -28,7 +29,7 @@ const AnnotationPage = () => {
   const saveAnnotations = async (videoId) => {
     if (boundingBoxes.length > 0) {
       try {
-        await fetch(`/api/annotations/${videoId}`, {
+        await fetch(`${API_BASE}/api/annotations/${videoId}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -41,16 +42,18 @@ const AnnotationPage = () => {
     }
   };
 
-  // Function to fetch annotations for a specific video from backend
   const fetchAnnotations = async (videoId) => {
     try {
-      const response = await fetch(`/api/annotations/${videoId}`);
-      if (!response.ok) throw new Error('Network response was not ok');
+      const response = await fetch(`${API_BASE}/api/annotations/${videoId}`);
+      if (!response.ok) {
+        const txt = await response.text();
+        throw new Error(`GET ${response.status}: ${txt}`);
+      }
       const data = await response.json();
       setBoundingBoxes(data);
     } catch (error) {
       console.error('Error fetching annotations:', error);
-      setBoundingBoxes([]); // Clear boxes on error
+      setBoundingBoxes([]);
     }
   };
 
