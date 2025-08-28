@@ -77,31 +77,37 @@ body {
   height: 10px;
   background-color: red;
   border-radius: 50%;
-  transform: translate(-50%, -50%);
-  cursor: se-resize;
   pointer-events: all;
 }
 
+/* Top-left */
 .resize-handle.top-left {
   top: 0;
   left: 0;
-  cursor: nw-se;
+  transform: translate(-50%, -50%);
+  cursor: nwse-resize;
 }
 
+/* Top-right */
 .resize-handle.top-right {
   top: 0;
   right: 0;
-  cursor: ne-sw;
+  transform: translate(50%, -50%);
+  cursor: nesw-resize;
 }
 
+/* Bottom-left */
 .resize-handle.bottom-left {
   bottom: 0;
   left: 0;
-  cursor: sw-ne;
+  transform: translate(-50%, 50%);
+  cursor: nesw-resize;
 }
 
+/* Bottom-right */
 .resize-handle.bottom-right {
   bottom: 0;
   right: 0;
-  cursor: se-nw;
+  transform: translate(50%, 50%);
+  cursor: nwse-resize;
 }
