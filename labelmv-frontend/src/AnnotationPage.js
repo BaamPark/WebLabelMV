@@ -6,6 +6,7 @@ const AnnotationPage = () => {
   const [boundingBoxes, setBoundingBoxes] = useState([]);
   const [isDrawing, setIsDrawing] = useState(false);
   const [draggingBoxId, setDraggingBoxId] = useState(null);
+  const [resizingBoxId, setResizingBoxId] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
 
   const containerRef = useRef(null);
@@ -85,6 +86,37 @@ const AnnotationPage = () => {
     }
   };
 
+  const handleResizeMouseDown = (e, boxId, corner) => {
+    e.stopPropagation(); // Prevent triggering container mouse events
+
+    if (!isDrawingEnabled && e.button === 0) { // Only left mouse button when not drawing
+      setResizingBoxId({ id: boxId, corner });
+    }
+  };
+
+  const handleMouseMoveForResize = (e) => {
+    if (resizingBoxId) {
+      const rect = containerRef.current.getBoundingClientRect();
+      let x = e.clientX - rect.left;
+      let y = e.clientY - rect.top;
+
+      setBoundingBoxes(prev => prev.map(box =>
+        box.id === resizingBoxId.id
+          ? {
+              ...box,
+              ...resizeBox(box, (x / rect.width) * 100, (y / rect.height) * 100, resizingBoxId.corner)
+            }
+          : box
+      ));
+    }
+  };
+
+  const handleMouseUpForResize = () => {
+    if (resizingBoxId) {
+      setResizingBoxId(null);
+    }
+  };
+
   const handleBoxMouseMove = (e) => {
     if (draggingBoxId !== null) {
       const rect = containerRef.current.getBoundingClientRect();
@@ -117,12 +149,48 @@ const AnnotationPage = () => {
     setBoundingBoxes(prev => prev.slice(0, -1));
   };
 
+  // Resize box based on corner being dragged
+  const resizeBox = (box, newX, newY, corner) => {
+    let newBox = { ...box };
+
+    switch(corner) {
+      case 'top-left':
+        newBox.width = Math.abs(newBox.left + newBox.width - newX);
+        newBox.height = Math.abs(newBox.top + newBox.height - newY);
+        newBox.left = newX;
+        newBox.top = newY;
+        break;
+      case 'top-right':
+        newBox.height = Math.abs(newBox.top + newBox.height - newY);
+        newBox.top = newY;
+        newBox.width = newX - newBox.left;
+        break;
+      case 'bottom-left':
+        newBox.width = Math.abs(newBox.left + newBox.width - newX);
+        newBox.left = newX;
+        newBox.height = newY - newBox.top;
+        break;
+      case 'bottom-right':
+        newBox.width = newX - newBox.left;
+        newBox.height = newY - newBox.top;
+        break;
+      default:
+        break;
+    }
+
+    // Ensure dimensions are positive
+    if (newBox.width < 1) newBox.width = 1;
+    if (newBox.height < 1) newBox.height = 1;
+
+    return newBox;
+  };
+
   return (
     <div
       className="annotation-page"
-      onMouseMove={handleBoxMouseMove}
-      onMouseUp={handleBoxMouseUp}
-      onMouseLeave={handleBoxMouseUp}
+      onMouseMove={isDrawing ? handleMouseMove : resizingBoxId ? handleMouseMoveForResize : handleBoxMouseMove}
+      onMouseUp={isDrawing ? handleMouseUp : resizingBoxId ? handleMouseUpForResize : handleBoxMouseUp}
+      onMouseLeave={isDrawing ? handleMouseUp : resizingBoxId ? handleMouseUpForResize : handleBoxMouseUp}
     >
       {/* Header for video progress bar */}
       <header className="header">
@@ -158,22 +226,38 @@ const AnnotationPage = () => {
             ref={containerRef}
             className="video-container"
             onMouseDown={handleMouseDown}
-            onMouseMove={isDrawing ? handleMouseMove : undefined}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
           >
             {boundingBoxes.map(box => (
-              <div
-                key={box.id}
-                className="bounding-box"
-                style={{
-                  left: `${box.left}%`,
-                  top: `${box.top}%`,
-                  width: `${box.width}%`,
-                  height: `${box.height}%`
-                }}
-                onMouseDown={(e) => handleBoxMouseDown(e, box.id, box)}
-              />
+              <React.Fragment key={box.id}>
+                <div
+                  className="bounding-box"
+                  style={{
+                    left: `${box.left}%`,
+                    top: `${box.top}%`,
+                    width: `${box.width}%`,
+                    height: `${box.height}%`
+                  }}
+                  onMouseDown={(e) => handleBoxMouseDown(e, box.id, box)}
+                >
+                  {/* Resize handles */}
+                  <div
+                    className="resize-handle top-left"
+                    onMouseDown={(e) => handleResizeMouseDown(e, box.id, 'top-left')}
+                  ></div>
+                  <div
+                    className="resize-handle top-right"
+                    onMouseDown={(e) => handleResizeMouseDown(e, box.id, 'top-right')}
+                  ></div>
+                  <div
+                    className="resize-handle bottom-left"
+                    onMouseDown={(e) => handleResizeMouseDown(e, box.id, 'bottom-left')}
+                  ></div>
+                  <div
+                    className="resize-handle bottom-right"
+                    onMouseDown={(e) => handleResizeMouseDown(e, box.id, 'bottom-right')}
+                  ></div>
+                </div>
+              </React.Fragment>
             ))}
             <div className="video-placeholder placeholder">
               <h4>Video/Image Display Area</h4>

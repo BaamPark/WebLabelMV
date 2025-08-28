@@ -70,3 +70,38 @@ body {
   pointer-events: all; /* Make sure the box can receive mouse events */
   cursor: move;
 }
+
+.resize-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background-color: red;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  cursor: se-resize;
+  pointer-events: all;
+}
+
+.resize-handle.top-left {
+  top: 0;
+  left: 0;
+  cursor: nw-se;
+}
+
+.resize-handle.top-right {
+  top: 0;
+  right: 0;
+  cursor: ne-sw;
+}
+
+.resize-handle.bottom-left {
+  bottom: 0;
+  left: 0;
+  cursor: sw-ne;
+}
+
+.resize-handle.bottom-right {
+  bottom: 0;
+  right: 0;
+  cursor: se-nw;
+}
