@@ -242,18 +242,34 @@ const AnnotationPage = () => {
                   {/* Resize handles */}
                   <div
                     className="resize-handle top-left"
+                    style={{
+                      left: '0%',
+                      top: '0%'
+                    }}
                     onMouseDown={(e) => handleResizeMouseDown(e, box.id, 'top-left')}
                   ></div>
                   <div
                     className="resize-handle top-right"
+                    style={{
+                      right: '0%',
+                      top: '0%'
+                    }}
                     onMouseDown={(e) => handleResizeMouseDown(e, box.id, 'top-right')}
                   ></div>
                   <div
                     className="resize-handle bottom-left"
+                    style={{
+                      left: '0%',
+                      bottom: '0%'
+                    }}
                     onMouseDown={(e) => handleResizeMouseDown(e, box.id, 'bottom-left')}
                   ></div>
                   <div
                     className="resize-handle bottom-right"
+                    style={{
+                      right: '0%',
+                      bottom: '0%'
+                    }}
                     onMouseDown={(e) => handleResizeMouseDown(e, box.id, 'bottom-right')}
                   ></div>
                 </div>
