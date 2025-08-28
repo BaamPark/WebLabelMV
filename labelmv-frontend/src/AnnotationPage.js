@@ -1,6 +1,6 @@
 
 
-import React, { useState, useRef, useContext } from 'react';
+import React, { useState, useRef, useContext, useEffect } from 'react';
 import './AnnotationPage.css';
 import { ProjectContext } from './App';
 
@@ -18,6 +18,51 @@ const AnnotationPage = () => {
   const { numVideos } = projectData;
 
   const containerRef = useRef(null);
+
+  // Fetch annotations for the currently selected video when component mounts or video changes
+  useEffect(() => {
+    fetchAnnotations(selectedVideoIndex + 1); // API expects 1-based index
+  }, [selectedVideoIndex]);
+
+  // Function to save current annotations to backend before switching videos
+  const saveAnnotations = async (videoId) => {
+    if (boundingBoxes.length > 0) {
+      try {
+        await fetch(`/api/annotations/${videoId}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(boundingBoxes)
+        });
+      } catch (error) {
+        console.error('Error saving annotations:', error);
+      }
+    }
+  };
+
+  // Function to fetch annotations for a specific video from backend
+  const fetchAnnotations = async (videoId) => {
+    try {
+      const response = await fetch(`/api/annotations/${videoId}`);
+      if (!response.ok) throw new Error('Network response was not ok');
+      const data = await response.json();
+      setBoundingBoxes(data);
+    } catch (error) {
+      console.error('Error fetching annotations:', error);
+      setBoundingBoxes([]); // Clear boxes on error
+    }
+  };
+
+  const handleVideoChange = async (e) => {
+    const newIndex = parseInt(e.target.value, 10) - 1; // Convert to 0-based index
+
+    // Save current video's annotations before switching
+    await saveAnnotations(selectedVideoIndex + 1);
+
+    // Update selected video index
+    setSelectedVideoIndex(newIndex);
+  };
 
   const handleDrawButtonClick = () => {
     if (isDrawingEnabled) {
@@ -196,11 +241,7 @@ const AnnotationPage = () => {
 
     return newBox;
   };
-
-  const handleVideoChange = (e) => {
-    setSelectedVideoIndex(parseInt(e.target.value, 10) - 1); // Convert to 0-based index
-  };
-
+  /* The handleVideoChange function has been moved above */
   // Handle box selection from list
   const handleListItemClick = (boxId) => {
     setSelectedBoxId(boxId);
