@@ -4,7 +4,7 @@
 import "./ProjectPage.css";
 import React, { useState, useContext } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { ProjectContext } from './App';
+import { ProjectContext, AuthContext } from './App';
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:56250';
 
 const ProjectPage = () => {
@@ -15,6 +15,7 @@ const ProjectPage = () => {
   const [frameRate, setFrameRate] = useState(1);
 
   const { setProjectData } = useContext(ProjectContext);
+  const { authToken } = useContext(AuthContext);
 
   const navigate = useNavigate();
 
@@ -53,9 +54,37 @@ const ProjectPage = () => {
   };
 
   // Navigate to annotation page and save project data
-  const startAnnotation = () => {
-    setProjectData({ numVideos, selectedVideos });
-    navigate('/annotation');
+  const startAnnotation = async () => {
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          videoDirectory,
+          selectedVideos,
+          fps: frameRate
+        })
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Failed to create project: ${res.status} ${txt}`);
+      }
+      const data = await res.json();
+      setProjectData({
+        projectId: data.projectId,
+        videoDirectory: data.videoDirectory,
+        selectedVideos: data.selectedVideos,
+        fps: data.fps,
+        numVideos: selectedVideos.length
+      });
+      navigate('/annotation');
+    } catch (e) {
+      console.error(e);
+      alert('Failed to start annotation. Check server logs.');
+    }
   };
 
   return (
@@ -133,4 +162,3 @@ const ProjectPage = () => {
 };
 
 export default ProjectPage;
-

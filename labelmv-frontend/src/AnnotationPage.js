@@ -12,10 +12,14 @@ const AnnotationPage = () => {
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [selectedVideoIndex, setSelectedVideoIndex] = useState(0);
   const [selectedBoxId, setSelectedBoxId] = useState(null); // Track selected box
+  const [sampleIndex, setSampleIndex] = useState(0);
+  const [sampledCount, setSampledCount] = useState(0);
+  const [frameStep, setFrameStep] = useState(1);
+  const [frameUrl, setFrameUrl] = useState(null);
 
   const { projectData } = useContext(ProjectContext);
   const { authToken } = useContext(AuthContext);
-  const { numVideos } = projectData;
+  const { numVideos = 1, projectId } = projectData;
 
   const containerRef = useRef(null);
 
@@ -23,6 +27,23 @@ const AnnotationPage = () => {
   useEffect(() => {
     fetchAnnotations(selectedVideoIndex + 1); // API expects 1-based index
   }, [selectedVideoIndex]);
+
+  // Load video info and first frame on video change
+  useEffect(() => {
+    const load = async () => {
+      setSampleIndex(0);
+      await fetchVideoInfo(selectedVideoIndex);
+      await fetchFrame(selectedVideoIndex, 0);
+    };
+    if (projectId) {
+      load();
+    }
+    // Clean up image url on unmount or video change
+    return () => {
+      if (frameUrl) URL.revokeObjectURL(frameUrl);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedVideoIndex, projectId]);
 
   // Function to save current annotations to backend before switching videos
   const saveAnnotations = async (videoId) => {
@@ -68,6 +89,59 @@ const AnnotationPage = () => {
 
     // Update selected video index
     setSelectedVideoIndex(newIndex);
+  };
+
+  const fetchVideoInfo = async (videoIndex) => {
+    try {
+      const resp = await fetch(`/api/projects/${projectId}/video_info?video_index=${videoIndex}`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      if (!resp.ok) throw new Error(`video_info ${resp.status}`);
+      const info = await resp.json();
+      setSampledCount(info.sampled_count || 0);
+      setFrameStep(info.step || 1);
+    } catch (e) {
+      console.error('Failed to fetch video info', e);
+      setSampledCount(0);
+      setFrameStep(1);
+    }
+  };
+
+  const fetchFrame = async (videoIndex, sIndex) => {
+    if (projectId == null) return;
+    try {
+      const resp = await fetch(`/api/projects/${projectId}/frame?video_index=${videoIndex}&sample_index=${sIndex}`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      if (!resp.ok) throw new Error(`frame ${resp.status}`);
+
+      // Try read headers for step/count if present
+      const hStep = parseInt(resp.headers.get('X-Frame-Step'));
+      const hCount = parseInt(resp.headers.get('X-Sampled-Count'));
+      if (!Number.isNaN(hStep)) setFrameStep(hStep);
+      if (!Number.isNaN(hCount)) setSampledCount(hCount);
+
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      if (frameUrl) URL.revokeObjectURL(frameUrl);
+      setFrameUrl(url);
+      setSampleIndex(sIndex);
+    } catch (e) {
+      console.error('Failed to fetch frame', e);
+    }
+  };
+
+  const gotoSample = async (s) => {
+    const clamped = Math.max(0, Math.min(s, Math.max(0, sampledCount - 1)));
+    await fetchFrame(selectedVideoIndex, clamped);
+  };
+
+  const nextSample = async () => {
+    await gotoSample(sampleIndex + 1);
+  };
+
+  const prevSample = async () => {
+    await gotoSample(sampleIndex - 1);
   };
 
   const handleDrawButtonClick = () => {
@@ -270,8 +344,24 @@ const AnnotationPage = () => {
     >
       {/* Header for video progress bar */}
       <header className="header">
-        <h2>Video Progress Bar</h2>
-        <div className="progress-placeholder">Progress bar goes here</div>
+        <div className="progress-controls">
+          <button className="btn btn-secondary" onClick={prevSample} disabled={sampleIndex <= 0}>Previous Frame</button>
+          <input
+            type="range"
+            min={0}
+            max={Math.max(0, sampledCount - 1)}
+            step={1}
+            value={sampleIndex}
+            onChange={(e) => gotoSample(parseInt(e.target.value, 10))}
+            disabled={sampledCount <= 0}
+            className="progress-range"
+          />
+          <button className="btn btn-secondary" onClick={nextSample} disabled={sampleIndex >= Math.max(0, sampledCount - 1)}>Next Frame</button>
+        </div>
+        <div className="progress-meta">
+          <span>Index: {sampleIndex} / {Math.max(0, sampledCount - 1)}</span>
+          <span className="step-info">Step (raw frames): {frameStep}</span>
+        </div>
       </header>
 
       {/* Main content area with three columns */}
@@ -303,6 +393,9 @@ const AnnotationPage = () => {
             className="video-container"
             onMouseDown={handleMouseDown}
           >
+            {frameUrl && (
+              <img src={frameUrl} alt="frame" className="video-frame" />
+            )}
             {boundingBoxes.map(box => (
               <React.Fragment key={box.id}>
                 <div
@@ -351,10 +444,12 @@ const AnnotationPage = () => {
                 </div>
               </React.Fragment>
             ))}
-            <div className="video-placeholder placeholder">
-              <h4>Video/Image Display Area</h4>
-              <p>Video or image will be displayed here</p>
-            </div>
+            {!frameUrl && (
+              <div className="video-placeholder placeholder">
+                <h4>Video/Image Display Area</h4>
+                <p>Video or image will be displayed here</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -387,4 +482,3 @@ const AnnotationPage = () => {
 };
 
 export default AnnotationPage;
-

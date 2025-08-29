@@ -1,7 +1,7 @@
 
 
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import os
 import json
@@ -11,6 +11,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_pymongo import PyMongo
 from functools import wraps
 from bson import ObjectId
+import cv2
+import math
 
 app = Flask(__name__)
 CORS(app)
@@ -140,6 +142,159 @@ def get_annotations(current_user, video_id):
 
     return jsonify(annotations)
 
+# -------- Project + Frame APIs --------
+
+@app.route('/api/projects', methods=['POST'])
+@token_required
+def create_or_update_project(current_user):
+    data = request.get_json(silent=True) or {}
+    video_directory = data.get('videoDirectory')
+    selected_videos = data.get('selectedVideos') or []
+    fps = data.get('fps')
+    project_id = data.get('projectId')  # optional for update
+
+    if not video_directory or not isinstance(selected_videos, list) or not fps:
+        return jsonify({"error": "videoDirectory, selectedVideos and fps are required"}), 400
+
+    doc = {
+        'user_id': str(current_user['_id']),
+        'video_directory': video_directory,
+        'selected_videos': selected_videos,
+        'fps': int(fps),
+        'updated_at': datetime.datetime.utcnow(),
+    }
+
+    if project_id:
+        # update existing (ensure ownership)
+        existing = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
+        if not existing or existing.get('user_id') != str(current_user['_id']):
+            return jsonify({"error": "Project not found or unauthorized"}), 404
+        mongo.db.projects.update_one({'_id': ObjectId(project_id)}, {'$set': doc})
+        pid = ObjectId(project_id)
+    else:
+        doc['created_at'] = datetime.datetime.utcnow()
+        res = mongo.db.projects.insert_one(doc)
+        pid = res.inserted_id
+
+    return jsonify({
+        'projectId': str(pid),
+        'videoDirectory': video_directory,
+        'selectedVideos': selected_videos,
+        'fps': int(fps)
+    })
+
+
+def _safe_video_path(base_dir, filename):
+    # join and normalize to avoid traversal
+    path = os.path.normpath(os.path.join(base_dir, filename))
+    # basic safety: ensure path starts with base_dir
+    base_dir_norm = os.path.normpath(base_dir)
+    if not path.startswith(base_dir_norm):
+        return None
+    return path
+
+
+def _video_info_for(project, video_index):
+    videos = project.get('selected_videos') or []
+    if video_index < 0 or video_index >= len(videos):
+        return None, ("Invalid video_index", 400)
+
+    video_path = _safe_video_path(project['video_directory'], videos[video_index])
+    if not video_path or not os.path.isfile(video_path):
+        return None, ("Video not found on server", 404)
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return None, ("Failed to open video", 500)
+
+    raw_fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    cap.release()
+
+    target_fps = int(project.get('fps') or 1)
+    target_fps = max(1, target_fps)
+    raw_fps = max(1.0, float(raw_fps))
+    step = max(1, int(round(raw_fps / float(target_fps))))
+    sampled_count = 0
+    if total_frames > 0:
+        sampled_count = int(math.floor((total_frames - 1) / step) + 1)
+
+    return {
+        'video_path': video_path,
+        'raw_fps': raw_fps,
+        'total_frames': total_frames,
+        'target_fps': target_fps,
+        'step': step,
+        'sampled_count': sampled_count,
+    }, None
+
+
+@app.route('/api/projects/<project_id>/video_info', methods=['GET'])
+@token_required
+def get_video_info(current_user, project_id):
+    try:
+        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
+    except Exception:
+        project = None
+    if not project or project.get('user_id') != str(current_user['_id']):
+        return jsonify({"error": "Project not found or unauthorized"}), 404
+
+    vi = request.args.get('video_index', default=0, type=int)
+    info, err = _video_info_for(project, vi)
+    if err:
+        msg, code = err
+        return jsonify({"error": msg}), code
+
+    return jsonify({
+        'raw_fps': info['raw_fps'],
+        'total_frames': info['total_frames'],
+        'target_fps': info['target_fps'],
+        'step': info['step'],
+        'sampled_count': info['sampled_count']
+    })
+
+
+@app.route('/api/projects/<project_id>/frame', methods=['GET'])
+@token_required
+def get_frame(current_user, project_id):
+    try:
+        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
+    except Exception:
+        project = None
+    if not project or project.get('user_id') != str(current_user['_id']):
+        return jsonify({"error": "Project not found or unauthorized"}), 404
+
+    video_index = request.args.get('video_index', default=0, type=int)
+    sample_index = request.args.get('sample_index', default=0, type=int)
+
+    info, err = _video_info_for(project, video_index)
+    if err:
+        msg, code = err
+        return jsonify({"error": msg}), code
+
+    step = info['step']
+    total_frames = info['total_frames']
+    frame_num = min(sample_index * step, max(0, total_frames - 1))
+
+    cap = cv2.VideoCapture(info['video_path'])
+    if not cap.isOpened():
+        return jsonify({"error": "Failed to open video"}), 500
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+    ok, frame = cap.read()
+    cap.release()
+    if not ok or frame is None:
+        return jsonify({"error": "Failed to read frame"}), 500
+
+    ok, buf = cv2.imencode('.jpg', frame)
+    if not ok:
+        return jsonify({"error": "Failed to encode frame"}), 500
+
+    data = buf.tobytes()
+    return Response(data, mimetype='image/jpeg', headers={
+        'X-Frame-Step': str(step),
+        'X-Sampled-Count': str(info['sampled_count'])
+    })
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=56250, debug=True)
-
