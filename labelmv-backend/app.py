@@ -58,7 +58,7 @@ def signup():
         return jsonify({"error": "User already exists"}), 400
 
     # Hash the password and store user in database
-    hashed_password = generate_password_hash(password, method='sha256')
+    hashed_password = generate_password_hash(password, method='pbkdf2:sha256')
     mongo.db.users.insert_one({
         "username": username,
         "password": hashed_password
@@ -87,8 +87,10 @@ def signin():
     token = jwt.encode({
         'user_id': str(user['_id']),
         'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
-    }, app.config['SECRET_KEY'])
+    }, app.config['SECRET_KEY'], algorithm="HS256")
 
+    if isinstance(token, bytes):
+        token = token.decode('utf-8')
     return jsonify({"token": token})
 
 # Middleware to verify JWT token

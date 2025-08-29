@@ -1,10 +1,8 @@
-
-
 import React, { useState, useRef, useContext, useEffect } from 'react';
 import './AnnotationPage.css';
 import { ProjectContext, AuthContext } from './App';
 
-const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:56250';
+
 const AnnotationPage = () => {
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
   const [boundingBoxes, setBoundingBoxes] = useState([]);
@@ -30,7 +28,7 @@ const AnnotationPage = () => {
   const saveAnnotations = async (videoId) => {
     try {
       console.log("Saving annotations for video:", videoId, boundingBoxes);
-      await fetch(`${API_BASE}/api/annotations/${videoId}`, {
+      await fetch(`/api/annotations/${videoId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -45,7 +43,7 @@ const AnnotationPage = () => {
 
   const fetchAnnotations = async (videoId) => {
     try {
-      const response = await fetch(`${API_BASE}/api/annotations/${videoId}`, {
+      const response = await fetch(`/api/annotations/${videoId}`, {
         headers: {
           'Authorization': `Bearer ${authToken}`
         }
