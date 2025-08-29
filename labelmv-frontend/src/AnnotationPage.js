@@ -27,18 +27,15 @@ const AnnotationPage = () => {
 
   // Function to save current annotations to backend before switching videos
   const saveAnnotations = async (videoId) => {
-    if (boundingBoxes.length > 0) {
-      try {
-        await fetch(`${API_BASE}/api/annotations/${videoId}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(boundingBoxes)
+    try {
+      console.log("Saving annotations for video:", videoId, boundingBoxes);
+      await fetch(`${API_BASE}/api/annotations/${videoId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(boundingBoxes) // may be [] if nothing
         });
       } catch (error) {
-        console.error('Error saving annotations:', error);
-      }
+      console.error('Error saving annotations:', error);
     }
   };
 

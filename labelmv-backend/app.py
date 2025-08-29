@@ -31,7 +31,7 @@ def get_videos():
 def save_annotations(video_id):
     data = request.get_json()
 
-    if not data:
+    if data is None:
         return jsonify({"error": "Invalid input"}), 400
 
     # Store annotations in memory with video ID as key
