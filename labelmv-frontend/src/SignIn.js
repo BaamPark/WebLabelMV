@@ -62,10 +62,12 @@ const SignIn = ({ onSignIn }) => {
         </div>
         <button type="submit" className="btn btn-primary">Sign In</button>
       </form>
+      <p>Don't have an account? <a href="/signup">Sign Up</a></p>
     </div>
   );
 };
 
 export default SignIn;
+
 
 
