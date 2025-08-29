@@ -122,12 +122,6 @@ const ProjectPage = () => {
         </section>
       )}
 
-      {/* Authentication Links */}
-      <section>
-        <p>Already have an account? <Link to="/signin">Sign In</Link></p>
-        <p>Don't have an account? <Link to="/signup">Sign Up</Link></p>
-      </section>
-
       {/* Start Annotation Button (shown after receiving video list) */}
       {availableVideos.length > 0 && (
         <section>
