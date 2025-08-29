@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useContext, useEffect } from 'react';
 import './AnnotationPage.css';
-import { ProjectContext } from './App';
+import { ProjectContext, AuthContext } from './App';
 
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:56250';
 const AnnotationPage = () => {
@@ -16,6 +16,7 @@ const AnnotationPage = () => {
   const [selectedBoxId, setSelectedBoxId] = useState(null); // Track selected box
 
   const { projectData } = useContext(ProjectContext);
+  const { authToken } = useContext(AuthContext);
   const { numVideos } = projectData;
 
   const containerRef = useRef(null);
@@ -31,7 +32,10 @@ const AnnotationPage = () => {
       console.log("Saving annotations for video:", videoId, boundingBoxes);
       await fetch(`${API_BASE}/api/annotations/${videoId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
         body: JSON.stringify(boundingBoxes) // may be [] if nothing
         });
       } catch (error) {
@@ -41,7 +45,11 @@ const AnnotationPage = () => {
 
   const fetchAnnotations = async (videoId) => {
     try {
-      const response = await fetch(`${API_BASE}/api/annotations/${videoId}`);
+      const response = await fetch(`${API_BASE}/api/annotations/${videoId}`, {
+        headers: {
+          'Authorization': `Bearer ${authToken}`
+        }
+      });
       if (!response.ok) {
         const txt = await response.text();
         throw new Error(`GET ${response.status}: ${txt}`);

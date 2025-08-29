@@ -3,7 +3,7 @@
 
 import "./ProjectPage.css";
 import React, { useState, useContext } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { ProjectContext } from './App';
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:56250';
 
@@ -121,6 +121,12 @@ const ProjectPage = () => {
           <p>Frames per second (FPS): {frameRate}</p>
         </section>
       )}
+
+      {/* Authentication Links */}
+      <section>
+        <p>Already have an account? <Link to="/signin">Sign In</Link></p>
+        <p>Don't have an account? <Link to="/signup">Sign Up</Link></p>
+      </section>
 
       {/* Start Annotation Button (shown after receiving video list) */}
       {availableVideos.length > 0 && (
