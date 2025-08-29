@@ -1,11 +1,16 @@
 
 
+
+
+
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import './AuthPage.css';
 
 const SignIn = ({ onSignIn }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -25,6 +30,7 @@ const SignIn = ({ onSignIn }) => {
 
       const data = await response.json();
       onSignIn(data.token);
+      navigate('/project'); // Redirect to project page after successful sign-in
     } catch (error) {
       console.error('Error signing in:', error);
     }
@@ -61,4 +67,5 @@ const SignIn = ({ onSignIn }) => {
 };
 
 export default SignIn;
+
 

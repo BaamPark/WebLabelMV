@@ -1,5 +1,7 @@
 
 
+
+
 import React, { createContext, useState } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import ProjectPage from './ProjectPage';
@@ -36,12 +38,15 @@ function App() {
       <AuthContext.Provider value={{ authToken, setAuthToken }}>
         <ProjectContext.Provider value={{ projectData, setProjectData }}>
           <Routes>
-            <Route path="/" element={<ProjectPage />} />
+            <Route path="/" element={<Navigate to="/signin" replace />} />
+            <Route path="/project" element={
+              authToken ? <ProjectPage /> : <Navigate to="/signin" />
+            } />
             <Route path="/annotation" element={
               authToken ? <AnnotationPage /> : <Navigate to="/signin" />
             } />
             <Route path="/signup" element={<SignUp onSignUp={handleSignUp} />} />
-            <Route path="/signin" element={<SignIn onSignIn={handleSignIn} />} />
+            <Route path="/signin" element={<SignIn onSignIn={handleSignIn} replacePath="/project" />} />
           </Routes>
         </ProjectContext.Provider>
       </AuthContext.Provider>
