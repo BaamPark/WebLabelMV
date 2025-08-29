@@ -296,5 +296,73 @@ def get_frame(current_user, project_id):
         'X-Sampled-Count': str(info['sampled_count'])
     })
 
+
+# -------- Per-frame Annotations (project/video/sample specific) --------
+
+@app.route('/api/projects/<project_id>/annotations', methods=['GET'])
+@token_required
+def get_frame_annotations(current_user, project_id):
+    try:
+        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
+    except Exception:
+        project = None
+    if not project or project.get('user_id') != str(current_user['_id']):
+        return jsonify({"error": "Project not found or unauthorized"}), 404
+
+    video_index = request.args.get('video_index', type=int)
+    sample_index = request.args.get('sample_index', type=int)
+    if video_index is None or sample_index is None:
+        return jsonify({"error": "video_index and sample_index are required"}), 400
+
+    doc = mongo.db.annotations.find_one({
+        'user_id': str(current_user['_id']),
+        'project_id': str(project['_id']),
+        'video_index': int(video_index),
+        'sample_index': int(sample_index),
+    })
+    boxes = doc.get('boxes') if doc else []
+    return jsonify(boxes)
+
+
+@app.route('/api/projects/<project_id>/annotations', methods=['POST'])
+@token_required
+def save_frame_annotations(current_user, project_id):
+    try:
+        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
+    except Exception:
+        project = None
+    if not project or project.get('user_id') != str(current_user['_id']):
+        return jsonify({"error": "Project not found or unauthorized"}), 404
+
+    video_index = request.args.get('video_index', type=int)
+    sample_index = request.args.get('sample_index', type=int)
+    if video_index is None or sample_index is None:
+        return jsonify({"error": "video_index and sample_index are required"}), 400
+
+    boxes = request.get_json(silent=True)
+    if boxes is None or not isinstance(boxes, list):
+        return jsonify({"error": "Body must be a JSON array of boxes"}), 400
+
+    mongo.db.annotations.update_one(
+        {
+            'user_id': str(current_user['_id']),
+            'project_id': str(project['_id']),
+            'video_index': int(video_index),
+            'sample_index': int(sample_index),
+        },
+        {
+            '$set': {
+                'boxes': boxes,
+                'updated_at': datetime.datetime.utcnow(),
+            },
+            '$setOnInsert': {
+                'created_at': datetime.datetime.utcnow(),
+            }
+        },
+        upsert=True
+    )
+
+    return jsonify({"success": True})
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=56250, debug=True)

@@ -23,17 +23,14 @@ const AnnotationPage = () => {
 
   const containerRef = useRef(null);
 
-  // Fetch annotations for the currently selected video when component mounts or video changes
-  useEffect(() => {
-    fetchAnnotations(selectedVideoIndex + 1); // API expects 1-based index
-  }, [selectedVideoIndex]);
+  // Per-frame annotations are loaded alongside frames (see loadSample)
 
   // Load video info and first frame on video change
   useEffect(() => {
     const load = async () => {
       setSampleIndex(0);
       await fetchVideoInfo(selectedVideoIndex);
-      await fetchFrame(selectedVideoIndex, 0);
+      await loadSample(selectedVideoIndex, 0);
     };
     if (projectId) {
       load();
@@ -45,26 +42,27 @@ const AnnotationPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedVideoIndex, projectId]);
 
-  // Function to save current annotations to backend before switching videos
-  const saveAnnotations = async (videoId) => {
+  // Save current frame's annotations
+  const saveAnnotations = async (videoIndex, sIndex) => {
+    if (!projectId) return;
     try {
-      console.log("Saving annotations for video:", videoId, boundingBoxes);
-      await fetch(`/api/annotations/${videoId}`, {
+      await fetch(`/api/projects/${projectId}/annotations?video_index=${videoIndex}&sample_index=${sIndex}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${authToken}`
         },
-        body: JSON.stringify(boundingBoxes) // may be [] if nothing
-        });
-      } catch (error) {
+        body: JSON.stringify(boundingBoxes)
+      });
+    } catch (error) {
       console.error('Error saving annotations:', error);
     }
   };
 
-  const fetchAnnotations = async (videoId) => {
+  const fetchAnnotations = async (videoIndex, sIndex) => {
+    if (!projectId) return;
     try {
-      const response = await fetch(`/api/annotations/${videoId}`, {
+      const response = await fetch(`/api/projects/${projectId}/annotations?video_index=${videoIndex}&sample_index=${sIndex}`, {
         headers: {
           'Authorization': `Bearer ${authToken}`
         }
@@ -74,7 +72,7 @@ const AnnotationPage = () => {
         throw new Error(`GET ${response.status}: ${txt}`);
       }
       const data = await response.json();
-      setBoundingBoxes(data);
+      setBoundingBoxes(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching annotations:', error);
       setBoundingBoxes([]);
@@ -84,8 +82,8 @@ const AnnotationPage = () => {
   const handleVideoChange = async (e) => {
     const newIndex = parseInt(e.target.value, 10) - 1; // Convert to 0-based index
 
-    // Save current video's annotations before switching
-    await saveAnnotations(selectedVideoIndex + 1);
+    // Save current video's current-frame annotations before switching
+    await saveAnnotations(selectedVideoIndex, sampleIndex);
 
     // Update selected video index
     setSelectedVideoIndex(newIndex);
@@ -131,9 +129,16 @@ const AnnotationPage = () => {
     }
   };
 
+  const loadSample = async (videoIndex, sIndex) => {
+    await fetchFrame(videoIndex, sIndex);
+    await fetchAnnotations(videoIndex, sIndex);
+  };
+
   const gotoSample = async (s) => {
     const clamped = Math.max(0, Math.min(s, Math.max(0, sampledCount - 1)));
-    await fetchFrame(selectedVideoIndex, clamped);
+    // Save current frame before moving
+    await saveAnnotations(selectedVideoIndex, sampleIndex);
+    await loadSample(selectedVideoIndex, clamped);
   };
 
   const nextSample = async () => {
