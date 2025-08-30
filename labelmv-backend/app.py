@@ -151,16 +151,20 @@ def create_or_update_project(current_user):
     video_directory = data.get('videoDirectory')
     selected_videos = data.get('selectedVideos') or []
     fps = data.get('fps')
+    classes = data.get('classes') or []
     project_id = data.get('projectId')  # optional for update
 
     if not video_directory or not isinstance(selected_videos, list) or not fps:
-        return jsonify({"error": "videoDirectory, selectedVideos and fps are required"}), 400
+        return jsonify({"error": "videoDirectory, selected_videos and fps are required"}), 400
+    if not isinstance(classes, list):
+        return jsonify({"error": "classes must be a list"}), 400
 
     doc = {
         'user_id': str(current_user['_id']),
         'video_directory': video_directory,
         'selected_videos': selected_videos,
         'fps': int(fps),
+        'classes': classes,
         'updated_at': datetime.datetime.utcnow(),
     }
 
@@ -180,7 +184,8 @@ def create_or_update_project(current_user):
         'projectId': str(pid),
         'videoDirectory': video_directory,
         'selectedVideos': selected_videos,
-        'fps': int(fps)
+        'fps': int(fps),
+        'classes': classes
     })
 
 

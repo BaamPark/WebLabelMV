@@ -13,6 +13,7 @@ const ProjectPage = () => {
   const [numVideos, setNumVideos] = useState(1);
   const [selectedVideos, setSelectedVideos] = useState(Array(numVideos).fill(null));
   const [frameRate, setFrameRate] = useState(1);
+  const [classesText, setClassesText] = useState("");
 
   const { setProjectData } = useContext(ProjectContext);
   const { authToken } = useContext(AuthContext);
@@ -56,6 +57,11 @@ const ProjectPage = () => {
   // Navigate to annotation page and save project data
   const startAnnotation = async () => {
     try {
+      const classes = classesText
+        .split(/\n|,/)
+        .map(s => s.trim())
+        .filter(Boolean);
+
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: {
@@ -65,7 +71,8 @@ const ProjectPage = () => {
         body: JSON.stringify({
           videoDirectory,
           selectedVideos,
-          fps: frameRate
+          fps: frameRate,
+          classes
         })
       });
       if (!res.ok) {
@@ -78,6 +85,7 @@ const ProjectPage = () => {
         videoDirectory: data.videoDirectory,
         selectedVideos: data.selectedVideos,
         fps: data.fps,
+        classes: data.classes || [],
         numVideos: selectedVideos.length
       });
       navigate('/annotation');
@@ -148,6 +156,21 @@ const ProjectPage = () => {
             min="1"
           />
           <p>Frames per second (FPS): {frameRate}</p>
+        </section>
+      )}
+
+      {/* Step 5: Define Classes (optional) */}
+      {selectedVideos.length > 0 && selectedVideos.every(video => video !== null && video !== '') && (
+        <section>
+          <h2>Classes</h2>
+          <p>Enter one class per line or comma-separated. First class is default.</p>
+          <textarea
+            rows={4}
+            value={classesText}
+            onChange={(e) => setClassesText(e.target.value)}
+            placeholder="e.g.\nmask\ngown"
+            style={{ width: '100%' }}
+          />
         </section>
       )}
 

@@ -16,12 +16,55 @@ const AnnotationPage = () => {
   const [sampledCount, setSampledCount] = useState(0);
   const [frameStep, setFrameStep] = useState(1);
   const [frameUrl, setFrameUrl] = useState(null);
+  const [imageNatural, setImageNatural] = useState({ w: 0, h: 0 });
+  const [viewportSize, setViewportSize] = useState({ w: window.innerWidth, h: window.innerHeight });
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [pendingIndex, setPendingIndex] = useState(null);
 
   const { projectData } = useContext(ProjectContext);
   const { authToken } = useContext(AuthContext);
-  const { numVideos = 1, projectId } = projectData;
+  const { numVideos = 1, projectId, classes = [] } = projectData;
 
   const containerRef = useRef(null);
+  const imageRef = useRef(null);
+  const frameControllerRef = useRef(null);
+  const annoControllerRef = useRef(null);
+
+  // Compute displayed image metrics within the container (with object-fit: contain)
+  const getDisplayMetrics = () => {
+    const container = containerRef.current;
+    if (!container || !imageRef.current || !imageNatural.w || !imageNatural.h) {
+      return { cw: 0, ch: 0, dispW: 0, dispH: 0, offX: 0, offY: 0 };
+    }
+    const rect = container.getBoundingClientRect();
+    const cw = rect.width;
+    const ch = rect.height;
+    const iw = imageNatural.w;
+    const ih = imageNatural.h;
+    const aspect = iw / ih;
+    let dispW = cw;
+    let dispH = cw / aspect;
+    if (dispH > ch) {
+      dispH = ch;
+      dispW = ch * aspect;
+    }
+    const offX = (cw - dispW) / 2;
+    const offY = (ch - dispH) / 2;
+    return { cw, ch, dispW, dispH, offX, offY };
+  };
+
+  // Convert event client coords to normalized [0,1] within the image area
+  const eventToNorm = (e) => {
+    const container = containerRef.current;
+    if (!container) return { x: 0, y: 0 };
+    const rect = container.getBoundingClientRect();
+    const { dispW, dispH, offX, offY } = getDisplayMetrics();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const x = (cx - offX) / (dispW || 1);
+    const y = (cy - offY) / (dispH || 1);
+    return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
+  };
 
   // Per-frame annotations are loaded alongside frames (see loadSample)
 
@@ -41,6 +84,13 @@ const AnnotationPage = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedVideoIndex, projectId]);
+
+  // Trigger re-render on window resize so boxes recompute positions
+  useEffect(() => {
+    const onResize = () => setViewportSize({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // Save current frame's annotations
   const saveAnnotations = async (videoIndex, sIndex) => {
@@ -62,10 +112,14 @@ const AnnotationPage = () => {
   const fetchAnnotations = async (videoIndex, sIndex) => {
     if (!projectId) return;
     try {
+      if (annoControllerRef.current) annoControllerRef.current.abort();
+      const controller = new AbortController();
+      annoControllerRef.current = controller;
       const response = await fetch(`/api/projects/${projectId}/annotations?video_index=${videoIndex}&sample_index=${sIndex}`, {
         headers: {
           'Authorization': `Bearer ${authToken}`
-        }
+        },
+        signal: controller.signal
       });
       if (!response.ok) {
         const txt = await response.text();
@@ -74,7 +128,7 @@ const AnnotationPage = () => {
       const data = await response.json();
       setBoundingBoxes(Array.isArray(data) ? data : []);
     } catch (error) {
-      console.error('Error fetching annotations:', error);
+      if (error.name !== 'AbortError') console.error('Error fetching annotations:', error);
       setBoundingBoxes([]);
     }
   };
@@ -108,8 +162,12 @@ const AnnotationPage = () => {
   const fetchFrame = async (videoIndex, sIndex) => {
     if (projectId == null) return;
     try {
+      if (frameControllerRef.current) frameControllerRef.current.abort();
+      const controller = new AbortController();
+      frameControllerRef.current = controller;
       const resp = await fetch(`/api/projects/${projectId}/frame?video_index=${videoIndex}&sample_index=${sIndex}`, {
-        headers: { 'Authorization': `Bearer ${authToken}` }
+        headers: { 'Authorization': `Bearer ${authToken}` },
+        signal: controller.signal
       });
       if (!resp.ok) throw new Error(`frame ${resp.status}`);
 
@@ -125,7 +183,7 @@ const AnnotationPage = () => {
       setFrameUrl(url);
       setSampleIndex(sIndex);
     } catch (e) {
-      console.error('Failed to fetch frame', e);
+      if (e.name !== 'AbortError') console.error('Failed to fetch frame', e);
     }
   };
 
@@ -136,17 +194,40 @@ const AnnotationPage = () => {
 
   const gotoSample = async (s) => {
     const clamped = Math.max(0, Math.min(s, Math.max(0, sampledCount - 1)));
+    if (clamped === sampleIndex) return;
     // Save current frame before moving
     await saveAnnotations(selectedVideoIndex, sampleIndex);
     await loadSample(selectedVideoIndex, clamped);
   };
 
   const nextSample = async () => {
+    if (isScrubbing) return;
     await gotoSample(sampleIndex + 1);
   };
 
   const prevSample = async () => {
+    if (isScrubbing) return;
     await gotoSample(sampleIndex - 1);
+  };
+
+  const handleSliderChange = (val) => {
+    if (isScrubbing) {
+      setPendingIndex(val);
+    } else {
+      gotoSample(val);
+    }
+  };
+
+  const beginScrub = () => {
+    setIsScrubbing(true);
+    setPendingIndex(sampleIndex);
+  };
+
+  const endScrub = () => {
+    setIsScrubbing(false);
+    const target = pendingIndex != null ? pendingIndex : sampleIndex;
+    setPendingIndex(null);
+    if (target !== sampleIndex) gotoSample(target);
   };
 
   const handleDrawButtonClick = () => {
@@ -161,42 +242,37 @@ const AnnotationPage = () => {
   };
 
   const handleMouseDown = (e) => {
-    if (!isDrawingEnabled || e.button !== 0) return; // Only left mouse button when drawing is enabled
-
-    const rect = containerRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
+    if (!isDrawingEnabled || e.button !== 0) return; // Only left mouse button
+    const { x, y } = eventToNorm(e);
     setIsDrawing(true);
+    const defaultClass = classes && classes.length > 0 ? classes[0] : '';
     setBoundingBoxes(prev => [
       ...prev,
       {
         id: Date.now(), // Unique ID for each bounding box
-        left: (x / rect.width) * 100, // Store as percentage of container width
-        top: (y / rect.height) * 100, // Store as percentage of container height
+        left: x, // normalized [0,1]
+        top: y,  // normalized [0,1]
         width: 0,
-        height: 0
+        height: 0,
+        className: defaultClass,
+        objectId: 0
       }
     ]);
   };
 
   const handleMouseMove = (e) => {
     if (!isDrawingEnabled || !isDrawing) return;
-
-    const rect = containerRef.current.getBoundingClientRect();
-    let x = e.clientX - rect.left;
-    let y = e.clientY - rect.top;
-
+    const { x, y } = eventToNorm(e);
     setBoundingBoxes(prev => {
       const newBoxes = [...prev];
       const lastBox = newBoxes[newBoxes.length - 1];
-      newBoxes[newBoxes.length - 1] = {
-        ...lastBox,
-        left: Math.min(lastBox.left, (x / rect.width) * 100),
-        top: Math.min(lastBox.top, (y / rect.height) * 100),
-        width: Math.abs((x / rect.width) * 100 - lastBox.left),
-        height: Math.abs((y / rect.height) * 100 - lastBox.top)
-      };
+      const x0 = lastBox.left;
+      const y0 = lastBox.top;
+      const left = Math.min(x0, x);
+      const top = Math.min(y0, y);
+      const width = Math.abs(x - x0);
+      const height = Math.abs(y - y0);
+      newBoxes[newBoxes.length - 1] = { ...lastBox, left, top, width, height };
       return newBoxes;
     });
   };
@@ -213,11 +289,10 @@ const AnnotationPage = () => {
     e.stopPropagation(); // Prevent triggering container mouse events
 
     if (!isDrawingEnabled && e.button === 0) { // Only left mouse button when not drawing
-      const rect = containerRef.current.getBoundingClientRect();
-
-      // Calculate offset from click position to top-left corner of the bounding box
-      const offsetX = ((e.clientX - rect.left) / rect.width * 100) - box.left;
-      const offsetY = ((e.clientY - rect.top) / rect.height * 100) - box.top;
+      const { x, y } = eventToNorm(e);
+      // Offset in normalized units
+      const offsetX = x - box.left;
+      const offsetY = y - box.top;
 
       setDraggingBoxId(boxId);
       setDragOffset({ x: offsetX, y: offsetY });
@@ -236,15 +311,13 @@ const AnnotationPage = () => {
 
   const handleMouseMoveForResize = (e) => {
     if (resizingBoxId) {
-      const rect = containerRef.current.getBoundingClientRect();
-      let x = e.clientX - rect.left;
-      let y = e.clientY - rect.top;
+      const { x, y } = eventToNorm(e);
 
       setBoundingBoxes(prev => prev.map(box =>
         box.id === resizingBoxId.id
           ? {
               ...box,
-              ...resizeBox(box, (x / rect.width) * 100, (y / rect.height) * 100, resizingBoxId.corner)
+              ...resizeBox(box, x, y, resizingBoxId.corner)
             }
           : box
       ));
@@ -260,20 +333,17 @@ const AnnotationPage = () => {
 
   const handleBoxMouseMove = (e) => {
     if (draggingBoxId !== null) {
-      const rect = containerRef.current.getBoundingClientRect();
-      let x = e.clientX - rect.left;
-      let y = e.clientY - rect.top;
-
-      // Calculate new position based on offset
-      const newLeft = ((x / rect.width) * 100) - dragOffset.x;
-      const newTop = ((y / rect.height) * 100) - dragOffset.y;
+      const { x, y } = eventToNorm(e);
+      // New normalized position based on offset
+      const newLeft = x - dragOffset.x;
+      const newTop = y - dragOffset.y;
 
       setBoundingBoxes(prev => prev.map(box =>
         box.id === draggingBoxId
           ? {
               ...box,
-              left: Math.max(0, Math.min(100, newLeft)), // Clamp to container bounds
-              top: Math.max(0, Math.min(100, newTop))
+              left: Math.max(0, Math.min(1 - box.width, newLeft)),
+              top: Math.max(0, Math.min(1 - box.height, newTop))
             }
           : box
       ));
@@ -291,7 +361,7 @@ const AnnotationPage = () => {
     setBoundingBoxes(prev => prev.slice(0, -1));
   };
 
-  // Resize box based on corner being dragged
+  // Resize box based on corner being dragged (inputs normalized [0,1])
   const resizeBox = (box, newX, newY, corner) => {
     let newBox = { ...box };
 
@@ -299,30 +369,36 @@ const AnnotationPage = () => {
       case 'top-left':
         newBox.width = Math.abs(newBox.left + newBox.width - newX);
         newBox.height = Math.abs(newBox.top + newBox.height - newY);
-        newBox.left = newX;
-        newBox.top = newY;
+        newBox.left = Math.min(newX, newBox.left + newBox.width);
+        newBox.top = Math.min(newY, newBox.top + newBox.height);
         break;
       case 'top-right':
         newBox.height = Math.abs(newBox.top + newBox.height - newY);
-        newBox.top = newY;
-        newBox.width = newX - newBox.left;
+        newBox.top = Math.min(newY, newBox.top + newBox.height);
+        newBox.width = Math.max(0, newX - newBox.left);
         break;
       case 'bottom-left':
         newBox.width = Math.abs(newBox.left + newBox.width - newX);
-        newBox.left = newX;
-        newBox.height = newY - newBox.top;
+        newBox.left = Math.min(newX, newBox.left + newBox.width);
+        newBox.height = Math.max(0, newY - newBox.top);
         break;
       case 'bottom-right':
-        newBox.width = newX - newBox.left;
-        newBox.height = newY - newBox.top;
+        newBox.width = Math.max(0, newX - newBox.left);
+        newBox.height = Math.max(0, newY - newBox.top);
         break;
       default:
         break;
     }
 
     // Ensure dimensions are positive
-    if (newBox.width < 1) newBox.width = 1;
-    if (newBox.height < 1) newBox.height = 1;
+    const minNorm = 0.001; // minimum normalized size to keep handles usable
+    if (newBox.width < minNorm) newBox.width = minNorm;
+    if (newBox.height < minNorm) newBox.height = minNorm;
+    // Clamp within [0,1]
+    if (newBox.left < 0) newBox.left = 0;
+    if (newBox.top < 0) newBox.top = 0;
+    if (newBox.left + newBox.width > 1) newBox.left = 1 - newBox.width;
+    if (newBox.top + newBox.height > 1) newBox.top = 1 - newBox.height;
 
     return newBox;
   };
@@ -356,8 +432,12 @@ const AnnotationPage = () => {
             min={0}
             max={Math.max(0, sampledCount - 1)}
             step={1}
-            value={sampleIndex}
-            onChange={(e) => gotoSample(parseInt(e.target.value, 10))}
+            value={isScrubbing && pendingIndex != null ? pendingIndex : sampleIndex}
+            onChange={(e) => handleSliderChange(parseInt(e.target.value, 10))}
+            onMouseDown={beginScrub}
+            onTouchStart={beginScrub}
+            onMouseUp={endScrub}
+            onTouchEnd={endScrub}
             disabled={sampledCount <= 0}
             className="progress-range"
           />
@@ -399,17 +479,25 @@ const AnnotationPage = () => {
             onMouseDown={handleMouseDown}
           >
             {frameUrl && (
-              <img src={frameUrl} alt="frame" className="video-frame" />
+              <img
+                ref={imageRef}
+                src={frameUrl}
+                alt="frame"
+                className="video-frame"
+                onLoad={(e) => setImageNatural({ w: e.target.naturalWidth, h: e.target.naturalHeight })}
+              />
             )}
-            {boundingBoxes.map(box => (
+            {(() => {
+              const { dispW, dispH, offX, offY } = getDisplayMetrics();
+              return boundingBoxes.map(box => (
               <React.Fragment key={box.id}>
                 <div
                   className={`bounding-box ${selectedBoxId === box.id ? 'highlighted' : ''}`}
                   style={{
-                    left: `${box.left}%`,
-                    top: `${box.top}%`,
-                    width: `${box.width}%`,
-                    height: `${box.height}%`
+                    left: `${offX + box.left * dispW}px`,
+                    top: `${offY + box.top * dispH}px`,
+                    width: `${box.width * dispW}px`,
+                    height: `${box.height * dispH}px`
                   }}
                   onMouseDown={(e) => handleBoxMouseDown(e, box.id, box)}
                 >
@@ -448,7 +536,8 @@ const AnnotationPage = () => {
                   ></div>
                 </div>
               </React.Fragment>
-            ))}
+            ));
+            })()}
             {!frameUrl && (
               <div className="video-placeholder placeholder">
                 <h4>Video/Image Display Area</h4>
@@ -475,8 +564,33 @@ const AnnotationPage = () => {
           <ul className="annotation-list">
             {boundingBoxes.map((box, index) => (
               <li key={box.id} onClick={() => handleListItemClick(box.id)}>
-                Bounding Box {index + 1}: [{box.left.toFixed(2)}%, {box.top.toFixed(2)}%] - [{box.width.toFixed(2)}% x {box.height.toFixed(2)}%]
-                <i className="bi bi-trash float-right" onClick={(e) => {e.stopPropagation(); handleDeleteBox(box.id);}}></i>
+                <div className="annotation-item">
+                  <span className="box-label">Box {index + 1}</span>
+                  <div className="annotation-controls">
+                    <select
+                      value={box.className || (classes[0] || '')}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setBoundingBoxes(prev => prev.map(b => b.id === box.id ? { ...b, className: v } : b));
+                      }}
+                    >
+                      {(classes.length ? classes : ['']).map((c, i) => (
+                        <option key={i} value={c}>{c || 'unlabeled'}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min={0}
+                      className="id-input"
+                      value={box.objectId ?? 0}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value || '0', 10);
+                        setBoundingBoxes(prev => prev.map(b => b.id === box.id ? { ...b, objectId: isNaN(v) ? 0 : v } : b));
+                      }}
+                    />
+                  </div>
+                  <i className="bi bi-trash" onClick={(e) => { e.stopPropagation(); handleDeleteBox(box.id); }}></i>
+                </div>
               </li>
             ))}
           </ul>
