@@ -23,7 +23,7 @@ const AnnotationPage = () => {
 
   const { projectData } = useContext(ProjectContext);
   const { authToken } = useContext(AuthContext);
-  const { numVideos = 1, projectId, classes = [] } = projectData;
+  const { numVideos = 1, projectId, classes = [], attributes = {} } = projectData;
 
   const containerRef = useRef(null);
   const imageRef = useRef(null);
@@ -246,6 +246,10 @@ const AnnotationPage = () => {
     const { x, y } = eventToNorm(e);
     setIsDrawing(true);
     const defaultClass = classes && classes.length > 0 ? classes[0] : '';
+    // Initialize default attribute selections per configured attribute
+    const defaultAttrs = Object.fromEntries(
+      Object.entries(attributes || {}).map(([name, opts]) => [name, (opts && opts[0]) || ''])
+    );
     setBoundingBoxes(prev => [
       ...prev,
       {
@@ -255,7 +259,8 @@ const AnnotationPage = () => {
         width: 0,
         height: 0,
         className: defaultClass,
-        objectId: 0
+        objectId: 0,
+        attributes: defaultAttrs
       }
     ]);
   };
@@ -588,6 +593,27 @@ const AnnotationPage = () => {
                         setBoundingBoxes(prev => prev.map(b => b.id === box.id ? { ...b, objectId: isNaN(v) ? 0 : v } : b));
                       }}
                     />
+                    {Object.keys(attributes || {}).length > 0 && (
+                      Object.keys(attributes).map((attrName) => (
+                        <select
+                          key={attrName}
+                          value={(box.attributes && box.attributes[attrName]) ?? ((attributes[attrName] && attributes[attrName][0]) || '')}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBoundingBoxes(prev => prev.map(b => {
+                              if (b.id !== box.id) return b;
+                              const nextAttrs = { ...(b.attributes || {}) };
+                              nextAttrs[attrName] = v;
+                              return { ...b, attributes: nextAttrs };
+                            }));
+                          }}
+                        >
+                          {(attributes[attrName] || ['']).map((opt, i) => (
+                            <option key={`${attrName}-${i}`} value={opt}>{opt || 'unset'}</option>
+                          ))}
+                        </select>
+                      ))
+                    )}
                   </div>
                   <i className="bi bi-trash" onClick={(e) => { e.stopPropagation(); handleDeleteBox(box.id); }}></i>
                 </div>

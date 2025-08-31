@@ -14,6 +14,7 @@ const ProjectPage = () => {
   const [selectedVideos, setSelectedVideos] = useState(Array(numVideos).fill(null));
   const [frameRate, setFrameRate] = useState(1);
   const [classesText, setClassesText] = useState("");
+  const [attributesText, setAttributesText] = useState("");
 
   const { setProjectData } = useContext(ProjectContext);
   const { authToken } = useContext(AuthContext);
@@ -62,6 +63,29 @@ const ProjectPage = () => {
         .map(s => s.trim())
         .filter(Boolean);
 
+      // Parse attributes text. Supported formats:
+      // name: {opt1, opt2} OR name: opt1, opt2
+      const attributes = {};
+      attributesText.split(/\n/).forEach((line) => {
+        const raw = line.trim();
+        if (!raw) return;
+        const colonIdx = raw.indexOf(":");
+        if (colonIdx === -1) return;
+        const name = raw.slice(0, colonIdx).trim();
+        if (!name) return;
+        let rest = raw.slice(colonIdx + 1).trim();
+        if (rest.startsWith("{") && rest.endsWith("}")) {
+          rest = rest.slice(1, -1).trim();
+        }
+        const options = rest
+          .split(/,/)
+          .map(s => s.trim())
+          .filter(Boolean);
+        if (options.length) {
+          attributes[name] = options;
+        }
+      });
+
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: {
@@ -72,7 +96,8 @@ const ProjectPage = () => {
           videoDirectory,
           selectedVideos,
           fps: frameRate,
-          classes
+          classes,
+          attributes
         })
       });
       if (!res.ok) {
@@ -85,7 +110,8 @@ const ProjectPage = () => {
         videoDirectory: data.videoDirectory,
         selectedVideos: data.selectedVideos,
         fps: data.fps,
-        classes: data.classes || [],
+        classes: data.classes || classes || [],
+        attributes: data.attributes || attributes || {},
         numVideos: selectedVideos.length
       });
       navigate('/annotation');
@@ -169,6 +195,21 @@ const ProjectPage = () => {
             value={classesText}
             onChange={(e) => setClassesText(e.target.value)}
             placeholder="e.g.\nmask\ngown"
+            style={{ width: '100%' }}
+          />
+        </section>
+      )}
+
+      {/* Step 6: Define Attributes (optional) */}
+      {selectedVideos.length > 0 && selectedVideos.every(video => video !== null && video !== '') && (
+        <section>
+          <h2>Attributes</h2>
+          <p>One per line: name: {`{`}option1, option2{`}`}. Applies to each box.</p>
+          <textarea
+            rows={4}
+            value={attributesText}
+            onChange={(e) => setAttributesText(e.target.value)}
+            placeholder={"mask: {mask absent, mask complete}\ngown: {gown absent, gown complete}"}
             style={{ width: '100%' }}
           />
         </section>

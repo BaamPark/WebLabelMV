@@ -19,6 +19,8 @@ function App() {
   const [projectData, setProjectData] = useState({
     numVideos: 1,
     selectedVideos: [],
+    classes: [],
+    attributes: {},
   });
 
   const [authToken, setAuthToken] = useState(null);
@@ -55,4 +57,3 @@ function App() {
 }
 
 export default App;
-
