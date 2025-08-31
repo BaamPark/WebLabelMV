@@ -78,7 +78,7 @@ body {
 .video-selection select {
   width: 100%;
   padding: 5px;
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .video-container {
@@ -168,9 +168,11 @@ body {
   align-items: center;
   cursor: pointer;
   margin-bottom: 6px;
-  padding: 4px 6px;
+  padding: 10px 10px; /* increased height */
   overflow: hidden;
   box-sizing: border-box;
+  font-size: 13px;
+  min-height: 60px; /* ensure taller item */
 }
 
 .annotation-list .bi-trash {
@@ -183,10 +185,10 @@ body {
 .annotation-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
   min-width: 0;
-  justify-content: space-between;
+  justify-content: flex-start;
 }
 
 .annotation-item .box-label {
@@ -197,30 +199,45 @@ body {
 .annotation-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex: 1 1 auto;
   min-width: 0;
 }
 
 .annotation-controls select,
 .annotation-controls input[type="number"] {
-  height: 28px;
-  font-size: 14px;
-  padding: 2px 6px;
-}
-
-.annotation-controls .id-input {
-  width: 44px;
-  text-align: right;
-}
-
-.annotation-item .bi-trash {
-  margin-left: 8px;
-  flex: 0 0 auto;
+  height: 22px;            /* unify control height */
+  line-height: 22px;       /* helps align text in some browsers */
+  font-size: 12px;         /* unify font size */
+  padding: 1px 4px;        /* consistent padding */
 }
 
 .annotation-controls select {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: 100%;
+  flex: 0 0 auto;
+  width: 100px;
+  min-width: 50px;
+}
+
+.annotation-controls .id-input {
+  width: 30px;
+}
+
+.annotation-item .bi-trash {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 480px) {
+  .annotation-controls select { width: 100px; }
+}
+
+/* Give more space to right column; trim left on wider screens */
+@media (min-width: 900px) {
+  .sidebar-left { width: 160px; }
+  .sidebar-right { width: 300px; }
+}
+
+@media (min-width: 1200px) {
+  .sidebar-left { width: 180px; }
+  .sidebar-right { width: 340px; }
 }
