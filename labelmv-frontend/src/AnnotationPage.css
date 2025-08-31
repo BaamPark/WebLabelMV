@@ -165,7 +165,7 @@ body {
 
 .annotation-list li {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   cursor: pointer;
   margin-bottom: 6px;
   padding: 10px 10px; /* increased height */
@@ -184,11 +184,12 @@ body {
 /* Annotation list compact controls */
 .annotation-item {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 6px 8px;          /* row and column gap */
   width: 100%;
   min-width: 0;
   justify-content: flex-start;
+  flex-wrap: wrap;        /* allow item content to wrap */
 }
 
 .annotation-item .box-label {
@@ -212,10 +213,21 @@ body {
   padding: 1px 4px;        /* consistent padding */
 }
 
+.annotation-controls {
+  display: flex;
+  flex-wrap: wrap;         /* wrap controls to next row */
+  gap: 6px 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.annotation-controls > * {
+  flex: 1 1 45%;           /* roughly two controls per row */
+  min-width: 100px;        /* keep controls usable on narrow screens */
+}
+
 .annotation-controls select {
-  flex: 0 0 auto;
-  width: 100px;
-  min-width: 50px;
+  width: 100%;             /* stretch within its flex cell */
 }
 
 .annotation-controls .id-input {
