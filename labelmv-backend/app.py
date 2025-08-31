@@ -152,12 +152,24 @@ def create_or_update_project(current_user):
     selected_videos = data.get('selectedVideos') or []
     fps = data.get('fps')
     classes = data.get('classes') or []
+    # optional project-level attributes: { name: [option1, option2, ...], ... }
+    raw_attributes = data.get('attributes') or {}
     project_id = data.get('projectId')  # optional for update
 
     if not video_directory or not isinstance(selected_videos, list) or not fps:
         return jsonify({"error": "videoDirectory, selected_videos and fps are required"}), 400
     if not isinstance(classes, list):
         return jsonify({"error": "classes must be a list"}), 400
+    # validate attributes shape if provided
+    attributes = {}
+    if isinstance(raw_attributes, dict):
+        for k, v in raw_attributes.items():
+            if not isinstance(k, str):
+                continue
+            if isinstance(v, list):
+                opts = [str(x) for x in v if isinstance(x, (str, int, float))]
+                if opts:
+                    attributes[k] = opts
 
     doc = {
         'user_id': str(current_user['_id']),
@@ -165,6 +177,7 @@ def create_or_update_project(current_user):
         'selected_videos': selected_videos,
         'fps': int(fps),
         'classes': classes,
+        'attributes': attributes,
         'updated_at': datetime.datetime.utcnow(),
     }
 
@@ -185,7 +198,31 @@ def create_or_update_project(current_user):
         'videoDirectory': video_directory,
         'selectedVideos': selected_videos,
         'fps': int(fps),
-        'classes': classes
+        'classes': classes,
+        'attributes': attributes
+    })
+
+
+@app.route('/api/projects/<project_id>', methods=['GET'])
+@token_required
+def get_project(current_user, project_id):
+    """Return a single project the user owns, including attributes and classes."""
+    try:
+        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
+    except Exception:
+        project = None
+    if not project or project.get('user_id') != str(current_user['_id']):
+        return jsonify({"error": "Project not found or unauthorized"}), 404
+
+    return jsonify({
+        'projectId': str(project['_id']),
+        'videoDirectory': project.get('video_directory'),
+        'selectedVideos': project.get('selected_videos') or [],
+        'fps': int(project.get('fps') or 1),
+        'classes': project.get('classes') or [],
+        'attributes': project.get('attributes') or {},
+        'createdAt': project.get('created_at').isoformat() if project.get('created_at') else None,
+        'updatedAt': project.get('updated_at').isoformat() if project.get('updated_at') else None,
     })
 
 
