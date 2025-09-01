@@ -246,6 +246,34 @@ def get_project(current_user, project_id):
     })
 
 
+@app.route('/api/projects/<project_id>', methods=['DELETE'])
+@token_required
+def delete_project(current_user, project_id):
+    """Delete a project and all related annotations owned by the current user."""
+    try:
+        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
+    except Exception:
+        project = None
+    if not project or project.get('user_id') != str(current_user['_id']):
+        return jsonify({"error": "Project not found or unauthorized"}), 404
+
+    # Delete related annotations first
+    ann_res = mongo.db.annotations.delete_many({
+        'user_id': str(current_user['_id']),
+        'project_id': str(project['_id'])
+    })
+    # Delete the project
+    proj_res = mongo.db.projects.delete_one({'_id': project['_id']})
+
+    return jsonify({
+        'success': True,
+        'deleted': {
+            'project': proj_res.deleted_count,
+            'annotations': ann_res.deleted_count,
+        }
+    })
+
+
 def _safe_video_path(base_dir, filename):
     # join and normalize to avoid traversal
     path = os.path.normpath(os.path.join(base_dir, filename))

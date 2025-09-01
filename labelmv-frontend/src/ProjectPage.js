@@ -26,22 +26,23 @@ const ProjectPage = () => {
   const navigate = useNavigate();
 
   // Fetch existing projects for this user on mount / token change
+  const fetchProjects = async () => {
+    if (!authToken) return;
+    try {
+      const res = await fetch('/api/projects', {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      if (!res.ok) throw new Error(`GET /api/projects ${res.status}`);
+      const data = await res.json();
+      setExistingProjects(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error('Failed to fetch projects', e);
+      setExistingProjects([]);
+    }
+  };
+
   useEffect(() => {
-    const load = async () => {
-      if (!authToken) return;
-      try {
-        const res = await fetch('/api/projects', {
-          headers: { 'Authorization': `Bearer ${authToken}` }
-        });
-        if (!res.ok) throw new Error(`GET /api/projects ${res.status}`);
-        const data = await res.json();
-        setExistingProjects(Array.isArray(data) ? data : []);
-      } catch (e) {
-        console.error('Failed to fetch projects', e);
-        setExistingProjects([]);
-      }
-    };
-    load();
+    fetchProjects();
   }, [authToken]);
 
   const handleContinueProject = () => {
@@ -57,6 +58,28 @@ const ProjectPage = () => {
       numVideos: (proj.selectedVideos || []).length
     });
     navigate('/annotation');
+  };
+
+  const handleDeleteProject = async () => {
+    if (!selectedProjectId) return;
+    const confirmed = window.confirm('Delete this project and all its annotations? This cannot be undone.');
+    if (!confirmed) return;
+    try {
+      const res = await fetch(`/api/projects/${selectedProjectId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`DELETE failed: ${res.status} ${txt}`);
+      }
+      await fetchProjects();
+      setSelectedProjectId('');
+      alert('Project deleted.');
+    } catch (e) {
+      console.error(e);
+      alert('Failed to delete project. Check server logs.');
+    }
   };
 
   // Step 1: Set video directory and fetch videos
@@ -200,16 +223,8 @@ const ProjectPage = () => {
               )}
               <div style={{ marginTop: 8 }}>
                 <button onClick={handleContinueProject} disabled={!selectedProjectId}>Continue</button>
-                <button style={{ marginLeft: 8 }} onClick={() => {
-                  // refresh list
-                  (async () => {
-                    try {
-                      const res = await fetch('/api/projects', { headers: { 'Authorization': `Bearer ${authToken}` } });
-                      const data = await res.json();
-                      setExistingProjects(Array.isArray(data) ? data : []);
-                    } catch (e) { console.error(e); }
-                  })();
-                }}>Refresh</button>
+                <button style={{ marginLeft: 8 }} onClick={fetchProjects}>Refresh</button>
+                <button style={{ marginLeft: 8 }} className="btn-danger" onClick={handleDeleteProject} disabled={!selectedProjectId}>Delete</button>
               </div>
             </>
           )}
