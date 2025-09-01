@@ -2,7 +2,7 @@
 
 
 import "./ProjectPage.css";
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { ProjectContext, AuthContext } from './App';
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:56250';
@@ -15,11 +15,49 @@ const ProjectPage = () => {
   const [frameRate, setFrameRate] = useState(1);
   const [classesText, setClassesText] = useState("");
   const [attributesText, setAttributesText] = useState("");
+  
+  const [existingProjects, setExistingProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  
 
   const { setProjectData } = useContext(ProjectContext);
   const { authToken } = useContext(AuthContext);
 
   const navigate = useNavigate();
+
+  // Fetch existing projects for this user on mount / token change
+  useEffect(() => {
+    const load = async () => {
+      if (!authToken) return;
+      try {
+        const res = await fetch('/api/projects', {
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        if (!res.ok) throw new Error(`GET /api/projects ${res.status}`);
+        const data = await res.json();
+        setExistingProjects(Array.isArray(data) ? data : []);
+      } catch (e) {
+        console.error('Failed to fetch projects', e);
+        setExistingProjects([]);
+      }
+    };
+    load();
+  }, [authToken]);
+
+  const handleContinueProject = () => {
+    const proj = existingProjects.find(p => p.projectId === selectedProjectId);
+    if (!proj) return;
+    setProjectData({
+      projectId: proj.projectId,
+      videoDirectory: proj.videoDirectory,
+      selectedVideos: proj.selectedVideos || [],
+      fps: proj.fps || 1,
+      classes: proj.classes || [],
+      attributes: proj.attributes || {},
+      numVideos: (proj.selectedVideos || []).length
+    });
+    navigate('/annotation');
+  };
 
   // Step 1: Set video directory and fetch videos
   const handleSetPathClick = () => {
@@ -124,6 +162,59 @@ const ProjectPage = () => {
   return (
     <div className="project-page">
       <h1>LabelMV Project Page</h1>
+
+      {/* Continue existing project */}
+      {authToken && (
+        <section>
+          <h2>Continue Project</h2>
+          {existingProjects.length === 0 ? (
+            <p>No previous projects found.</p>
+          ) : (
+            <>
+              <select
+                value={selectedProjectId}
+                onChange={(e) => setSelectedProjectId(e.target.value)}
+                style={{ width: '100%' }}
+              >
+                <option value="">Select a project…</option>
+                {existingProjects.map((p) => (
+                  <option key={p.projectId} value={p.projectId}>
+                    {p.projectId.slice(-6)} • {p.videoDirectory} • {p.selectedVideos?.length || 0} vids • {p.fps} fps
+                  </option>
+                ))}
+              </select>
+              {selectedProjectId && (
+                <div style={{ marginTop: 6, fontSize: 12, color: '#555' }}>
+                  {(() => {
+                    const p = existingProjects.find(x => x.projectId === selectedProjectId) || {};
+                    const cls = (p.classes || []).join(', ') || '—';
+                    const attrs = Object.keys(p.attributes || {}).join(', ') || '—';
+                    return (
+                      <>
+                        <div>Classes: {cls}</div>
+                        <div>Attributes: {attrs}</div>
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+              <div style={{ marginTop: 8 }}>
+                <button onClick={handleContinueProject} disabled={!selectedProjectId}>Continue</button>
+                <button style={{ marginLeft: 8 }} onClick={() => {
+                  // refresh list
+                  (async () => {
+                    try {
+                      const res = await fetch('/api/projects', { headers: { 'Authorization': `Bearer ${authToken}` } });
+                      const data = await res.json();
+                      setExistingProjects(Array.isArray(data) ? data : []);
+                    } catch (e) { console.error(e); }
+                  })();
+                }}>Refresh</button>
+              </div>
+            </>
+          )}
+        </section>
+      )}
 
       {/* Step 1: Video Directory */}
       <section>

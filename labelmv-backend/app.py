@@ -202,6 +202,26 @@ def create_or_update_project(current_user):
         'attributes': attributes
     })
 
+@app.route('/api/projects', methods=['GET'])
+@token_required
+def list_projects(current_user):
+    """List all projects owned by the current user, newest first."""
+    user_id = str(current_user['_id'])
+    cursor = mongo.db.projects.find({'user_id': user_id}).sort('updated_at', -1)
+    items = []
+    for p in cursor:
+        items.append({
+            'projectId': str(p.get('_id')),
+            'videoDirectory': p.get('video_directory'),
+            'selectedVideos': p.get('selected_videos') or [],
+            'fps': int(p.get('fps') or 1),
+            'classes': p.get('classes') or [],
+            'attributes': p.get('attributes') or {},
+            'createdAt': p.get('created_at').isoformat() if p.get('created_at') else None,
+            'updatedAt': p.get('updated_at').isoformat() if p.get('updated_at') else None,
+        })
+    return jsonify(items)
+
 
 @app.route('/api/projects/<project_id>', methods=['GET'])
 @token_required
