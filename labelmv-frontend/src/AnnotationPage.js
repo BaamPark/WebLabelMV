@@ -210,6 +210,10 @@ const AnnotationPage = () => {
     await gotoSample(sampleIndex - 1);
   };
 
+  const handleManualSave = async () => {
+    await saveAnnotations(selectedVideoIndex, sampleIndex);
+  };
+
   const handleSliderChange = (val) => {
     if (isScrubbing) {
       setPendingIndex(val);
@@ -464,15 +468,7 @@ const AnnotationPage = () => {
           >
             {isDrawingEnabled ? "Drawing Enabled" : "Draw Bounding Box"}
           </button>
-          <button
-            className="btn btn-danger"
-            onClick={removeLastBoundingBox}
-            disabled={boundingBoxes.length === 0}
-          >
-            Remove Last Bounding Box
-          </button>
-          <button className="btn btn-secondary" disabled>Select Tool</button>
-          <button className="btn btn-success" disabled>Save Annotation</button>
+          <button className="btn btn-success" onClick={handleManualSave}>Save Annotation</button>
         </aside>
 
         {/* Center area for video/image display */}
