@@ -237,7 +237,6 @@ const AnnotationPage = () => {
     } else {
       // Otherwise enable drawing mode
       setIsDrawingEnabled(true);
-      alert("Draw bounding box tool activated - click and drag to draw");
     }
   };
 
