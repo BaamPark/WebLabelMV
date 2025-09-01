@@ -96,13 +96,18 @@ const AnnotationPage = () => {
   const saveAnnotations = async (videoIndex, sIndex) => {
     if (!projectId) return;
     try {
+      // ensure objectId defaults to 0 if not provided or invalid
+      const boxesToSave = (boundingBoxes || []).map(b => {
+        const n = parseInt(b.objectId, 10);
+        return { ...b, objectId: Number.isFinite(n) ? n : 0 };
+      });
       await fetch(`/api/projects/${projectId}/annotations?video_index=${videoIndex}&sample_index=${sIndex}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${authToken}`
         },
-        body: JSON.stringify(boundingBoxes)
+        body: JSON.stringify(boxesToSave)
       });
     } catch (error) {
       console.error('Error saving annotations:', error);
@@ -260,7 +265,7 @@ const AnnotationPage = () => {
         width: 0,
         height: 0,
         className: defaultClass,
-        objectId: 0,
+        objectId: null,
         attributes: defaultAttrs
       }
     ]);
@@ -607,13 +612,14 @@ const AnnotationPage = () => {
                       ))}
                     </select>
                     <input
-                      type="number"
-                      min={0}
+                      type="text"
                       className="id-input"
-                      value={box.objectId ?? 0}
+                      placeholder="#ID"
+                      value={(box.objectId == null || box.objectId === 0) ? '' : String(box.objectId)}
                       onChange={(e) => {
-                        const v = parseInt(e.target.value || '0', 10);
-                        setBoundingBoxes(prev => prev.map(b => b.id === box.id ? { ...b, objectId: isNaN(v) ? 0 : v } : b));
+                        const raw = e.target.value.trim();
+                        const n = parseInt(raw, 10);
+                        setBoundingBoxes(prev => prev.map(b => b.id === box.id ? { ...b, objectId: Number.isFinite(n) ? n : null } : b));
                       }}
                     />
                     {Object.keys(attributes || {}).length > 0 && (
