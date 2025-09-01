@@ -94,14 +94,14 @@ const AnnotationPage = () => {
 
   // Save current frame's annotations
   const saveAnnotations = async (videoIndex, sIndex) => {
-    if (!projectId) return;
+    if (!projectId) return false;
     try {
       // ensure objectId defaults to 0 if not provided or invalid
       const boxesToSave = (boundingBoxes || []).map(b => {
         const n = parseInt(b.objectId, 10);
         return { ...b, objectId: Number.isFinite(n) ? n : 0 };
       });
-      await fetch(`/api/projects/${projectId}/annotations?video_index=${videoIndex}&sample_index=${sIndex}`, {
+      const resp = await fetch(`/api/projects/${projectId}/annotations?video_index=${videoIndex}&sample_index=${sIndex}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -109,8 +109,10 @@ const AnnotationPage = () => {
         },
         body: JSON.stringify(boxesToSave)
       });
+      return !!resp.ok;
     } catch (error) {
       console.error('Error saving annotations:', error);
+      return false;
     }
   };
 
@@ -272,7 +274,12 @@ const AnnotationPage = () => {
   };
 
   const handleManualSave = async () => {
-    await saveAnnotations(selectedVideoIndex, sampleIndex);
+    const ok = await saveAnnotations(selectedVideoIndex, sampleIndex);
+    if (ok) {
+      alert('Annotation saved');
+    } else {
+      alert('Failed to save annotation');
+    }
   };
 
   const handleExport = async () => {
