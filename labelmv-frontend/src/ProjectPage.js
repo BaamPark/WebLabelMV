@@ -291,7 +291,7 @@ const ProjectPage = () => {
 
       {/* Step 1: Video Directory */}
       <section>
-        <h2>Video Directory</h2>
+        <h2>New Project</h2>
         <input
           type="text"
           value={videoDirectory}

@@ -304,6 +304,32 @@ const AnnotationPage = () => {
     }
   };
 
+  const handleLoadPrelabel = async () => {
+    if (!projectId) return;
+    if (sampleIndex <= 0) {
+      alert('No previous frame to load');
+      return;
+    }
+    try {
+      const prev = sampleIndex - 1;
+      const resp = await fetch(`/api/projects/${projectId}/annotations?video_index=${selectedVideoIndex}&sample_index=${prev}`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      if (!resp.ok) throw new Error(`prev annotations ${resp.status}`);
+      const data = await resp.json();
+      if (!Array.isArray(data) || data.length === 0) {
+        alert('No annotations found in previous frame');
+        return;
+      }
+      setBoundingBoxes(data);
+      const ok = await saveAnnotations(selectedVideoIndex, sampleIndex);
+      alert(ok ? 'Prelabel loaded' : 'Loaded, but saving failed');
+    } catch (e) {
+      console.error('Load prelabel failed', e);
+      alert('Failed to load prelabel');
+    }
+  };
+
   // Import moved to Project Page
 
   const handleMouseMove = (e) => {
@@ -507,6 +533,7 @@ const AnnotationPage = () => {
             {isDrawingEnabled ? "Drawing Enabled" : "Draw Bounding Box"}
           </button>
           <button className="btn btn-success" onClick={handleManualSave}>Save Annotation</button>
+          <button className="btn btn-secondary" onClick={handleLoadPrelabel}>Load prelabel</button>
           <button className="btn btn-secondary" onClick={handleExport}>Export Annotations</button>
           {/* Import moved to Project Page */}
         </aside>
