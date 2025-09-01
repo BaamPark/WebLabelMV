@@ -49,6 +49,13 @@ body {
   overflow-y: auto;
 }
 
+/* Add vertical spacing between tool buttons */
+.sidebar-left {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .sidebar-right {
   border-right: none;
   border-left: 1px solid #ddd;

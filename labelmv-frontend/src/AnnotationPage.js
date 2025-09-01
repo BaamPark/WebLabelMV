@@ -23,7 +23,7 @@ const AnnotationPage = () => {
 
   const { projectData } = useContext(ProjectContext);
   const { authToken } = useContext(AuthContext);
-  const { numVideos = 1, projectId, classes = [], attributes = {} } = projectData;
+  const { numVideos = 1, projectId, classes = [], attributes = {}, selectedVideos: projectSelectedVideos = [] } = projectData;
 
   const containerRef = useRef(null);
   const imageRef = useRef(null);
@@ -71,9 +71,10 @@ const AnnotationPage = () => {
   // Load video info and first frame on video change
   useEffect(() => {
     const load = async () => {
-      setSampleIndex(0);
-      await fetchVideoInfo(selectedVideoIndex);
-      await loadSample(selectedVideoIndex, 0);
+      const info = await fetchVideoInfo(selectedVideoIndex);
+      const maxIndex = Math.max(0, (info && info.sampled_count ? info.sampled_count - 1 : 0));
+      const targetIndex = Math.max(0, Math.min(sampleIndex, maxIndex));
+      await loadSample(selectedVideoIndex, targetIndex);
     };
     if (projectId) {
       load();
@@ -159,10 +160,12 @@ const AnnotationPage = () => {
       const info = await resp.json();
       setSampledCount(info.sampled_count || 0);
       setFrameStep(info.step || 1);
+      return info;
     } catch (e) {
       console.error('Failed to fetch video info', e);
       setSampledCount(0);
       setFrameStep(1);
+      return { sampled_count: 0, step: 1 };
     }
   };
 
@@ -621,7 +624,7 @@ const AnnotationPage = () => {
             <h4>Select Video</h4>
             <select value={selectedVideoIndex + 1} onChange={handleVideoChange}>
               {[...Array(numVideos).keys()].map((i) => (
-                <option key={i} value={i + 1}>video_{i + 1}</option>
+                <option key={i} value={i + 1}>{projectSelectedVideos[i] || `video_${i + 1}`}</option>
               ))}
             </select>
           </div>
