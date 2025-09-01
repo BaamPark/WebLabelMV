@@ -210,9 +210,7 @@ const AnnotationPage = () => {
     await gotoSample(sampleIndex - 1);
   };
 
-  const handleManualSave = async () => {
-    await saveAnnotations(selectedVideoIndex, sampleIndex);
-  };
+  
 
   const handleSliderChange = (val) => {
     if (isScrubbing) {
@@ -267,6 +265,34 @@ const AnnotationPage = () => {
       }
     ]);
   };
+
+  const handleManualSave = async () => {
+    await saveAnnotations(selectedVideoIndex, sampleIndex);
+  };
+
+  const handleExport = async () => {
+    if (!projectId) return;
+    try {
+      const res = await fetch(`/api/projects/${projectId}/export`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      if (!res.ok) throw new Error(`export ${res.status}`);
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `annotations_${projectId}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Export failed', e);
+      alert('Export failed');
+    }
+  };
+
+  // Import moved to Project Page
 
   const handleMouseMove = (e) => {
     if (!isDrawingEnabled || !isDrawing) return;
@@ -469,6 +495,8 @@ const AnnotationPage = () => {
             {isDrawingEnabled ? "Drawing Enabled" : "Draw Bounding Box"}
           </button>
           <button className="btn btn-success" onClick={handleManualSave}>Save Annotation</button>
+          <button className="btn btn-secondary" onClick={handleExport}>Export Annotations</button>
+          {/* Import moved to Project Page */}
         </aside>
 
         {/* Center area for video/image display */}

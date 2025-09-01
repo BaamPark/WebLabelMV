@@ -2,6 +2,7 @@
 
 
 from flask import Flask, request, jsonify, Response
+from flask import send_file
 from flask_cors import CORS
 import os
 import json
@@ -13,6 +14,7 @@ from functools import wraps
 from bson import ObjectId
 import cv2
 import math
+import io
 
 app = Flask(__name__)
 CORS(app)
@@ -271,6 +273,217 @@ def delete_project(current_user, project_id):
             'project': proj_res.deleted_count,
             'annotations': ann_res.deleted_count,
         }
+    })
+
+
+@app.route('/api/projects/<project_id>/export', methods=['GET'])
+@token_required
+def export_project_annotations(current_user, project_id):
+    """Export project metadata and all annotations for this user/project as JSON."""
+    try:
+        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
+    except Exception:
+        project = None
+    if not project or project.get('user_id') != str(current_user['_id']):
+        return jsonify({"error": "Project not found or unauthorized"}), 404
+
+    user_info = {
+        'id': str(current_user['_id']),
+        'username': current_user.get('username'),
+    }
+
+    # Gather annotations
+    cursor = mongo.db.annotations.find({
+        'user_id': str(current_user['_id']),
+        'project_id': str(project['_id'])
+    }).sort([('video_index', 1), ('sample_index', 1)])
+    annotations = []
+    for doc in cursor:
+        annotations.append({
+            'video_index': int(doc.get('video_index', 0)),
+            'sample_index': int(doc.get('sample_index', 0)),
+            'boxes': doc.get('boxes') or [],
+            'updated_at': doc.get('updated_at').isoformat() if doc.get('updated_at') else None,
+            'created_at': doc.get('created_at').isoformat() if doc.get('created_at') else None,
+        })
+
+    payload = {
+        'schema_version': 1,
+        'exported_at': datetime.datetime.utcnow().isoformat() + 'Z',
+        'project': {
+            'id': str(project['_id']),
+            'video_directory': project.get('video_directory'),
+            'selected_videos': project.get('selected_videos') or [],
+            'fps': int(project.get('fps') or 1),
+            'classes': project.get('classes') or [],
+            'attributes': project.get('attributes') or {},
+        },
+        'user': user_info,
+        'annotations': annotations,
+    }
+
+    data = json.dumps(payload, ensure_ascii=False, indent=2).encode('utf-8')
+    filename = f"annotations_{str(project['_id'])}.json"
+    return Response(data, mimetype='application/json', headers={
+        'Content-Disposition': f'attachment; filename="{filename}"'
+    })
+
+
+@app.route('/api/projects/<project_id>/import', methods=['POST'])
+@token_required
+def import_project_annotations(current_user, project_id):
+    """Import annotations JSON for this project. Optionally updates classes/attributes."""
+    try:
+        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
+    except Exception:
+        project = None
+    if not project or project.get('user_id') != str(current_user['_id']):
+        return jsonify({"error": "Project not found or unauthorized"}), 404
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Body must be JSON object payload produced by export"}), 400
+
+    proj_meta = data.get('project') or {}
+    annos = data.get('annotations') or []
+
+    # Optionally update classes/attributes if present
+    updates = {}
+    if isinstance(proj_meta.get('classes'), list):
+        updates['classes'] = proj_meta['classes']
+    attrs = proj_meta.get('attributes')
+    if isinstance(attrs, dict):
+        # ensure list of strings
+        sanitized = {}
+        for k, v in attrs.items():
+            if isinstance(k, str) and isinstance(v, list):
+                opts = [str(x) for x in v if isinstance(x, (str, int, float))]
+                sanitized[k] = opts
+        updates['attributes'] = sanitized
+    if updates:
+        updates['updated_at'] = datetime.datetime.utcnow()
+        mongo.db.projects.update_one({'_id': project['_id']}, {'$set': updates})
+
+    # Upsert annotations
+    count = 0
+    for item in annos:
+        try:
+            vi = int(item.get('video_index'))
+            si = int(item.get('sample_index'))
+        except Exception:
+            continue
+        boxes = item.get('boxes')
+        if not isinstance(boxes, list):
+            continue
+        mongo.db.annotations.update_one(
+            {
+                'user_id': str(current_user['_id']),
+                'project_id': str(project['_id']),
+                'video_index': vi,
+                'sample_index': si,
+            },
+            {
+                '$set': {
+                    'boxes': boxes,
+                    'updated_at': datetime.datetime.utcnow(),
+                },
+                '$setOnInsert': {
+                    'created_at': datetime.datetime.utcnow(),
+                }
+            },
+            upsert=True
+        )
+        count += 1
+
+    return jsonify({"success": True, "imported": count})
+
+
+@app.route('/api/projects/import', methods=['POST'])
+@token_required
+def import_full_project(current_user):
+    """Create a new project for the current user from an export JSON and import its annotations.
+
+    Accepts the same payload produced by /export. Creates a project owned by the caller
+    using metadata (video_directory, selected_videos, fps, classes, attributes), then upserts
+    all provided annotations to this new project.
+    """
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Body must be JSON object payload produced by export"}), 400
+
+    proj_meta = payload.get('project') or {}
+    video_directory = proj_meta.get('video_directory')
+    selected_videos = proj_meta.get('selected_videos') or []
+    fps = proj_meta.get('fps') or 1
+    classes = proj_meta.get('classes') or []
+    attributes_in = proj_meta.get('attributes') or {}
+
+    # sanitize
+    if not isinstance(selected_videos, list):
+        selected_videos = []
+    if not isinstance(classes, list):
+        classes = []
+    attributes = {}
+    if isinstance(attributes_in, dict):
+        for k, v in attributes_in.items():
+            if isinstance(k, str) and isinstance(v, list):
+                opts = [str(x) for x in v if isinstance(x, (str, int, float))]
+                attributes[k] = opts
+
+    doc = {
+        'user_id': str(current_user['_id']),
+        'video_directory': video_directory,
+        'selected_videos': selected_videos,
+        'fps': int(fps) if isinstance(fps, (int, float, str)) else 1,
+        'classes': classes,
+        'attributes': attributes,
+        'created_at': datetime.datetime.utcnow(),
+        'updated_at': datetime.datetime.utcnow(),
+    }
+    res = mongo.db.projects.insert_one(doc)
+    new_pid = res.inserted_id
+
+    # import annotations
+    annos = payload.get('annotations') or []
+    imported = 0
+    for item in annos:
+        try:
+            vi = int(item.get('video_index'))
+            si = int(item.get('sample_index'))
+        except Exception:
+            continue
+        boxes = item.get('boxes')
+        if not isinstance(boxes, list):
+            continue
+        mongo.db.annotations.update_one(
+            {
+                'user_id': str(current_user['_id']),
+                'project_id': str(new_pid),
+                'video_index': vi,
+                'sample_index': si,
+            },
+            {
+                '$set': {
+                    'boxes': boxes,
+                    'updated_at': datetime.datetime.utcnow(),
+                },
+                '$setOnInsert': {
+                    'created_at': datetime.datetime.utcnow(),
+                }
+            },
+            upsert=True
+        )
+        imported += 1
+
+    return jsonify({
+        'success': True,
+        'projectId': str(new_pid),
+        'videoDirectory': video_directory,
+        'selectedVideos': selected_videos,
+        'fps': int(doc['fps']),
+        'classes': classes,
+        'attributes': attributes,
+        'imported': imported,
     })
 
 

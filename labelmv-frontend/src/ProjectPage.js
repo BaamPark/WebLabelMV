@@ -18,6 +18,7 @@ const ProjectPage = () => {
   
   const [existingProjects, setExistingProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
+  const importFileRef = React.useRef(null);
   
 
   const { setProjectData } = useContext(ProjectContext);
@@ -58,6 +59,47 @@ const ProjectPage = () => {
       numVideos: (proj.selectedVideos || []).length
     });
     navigate('/annotation');
+  };
+
+  const handleImportProjectClick = () => {
+    if (importFileRef.current) importFileRef.current.click();
+  };
+
+  const handleImportProjectFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      const res = await fetch('/api/projects/import', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(`import failed: ${res.status} ${t}`);
+      }
+      const data = await res.json();
+      setProjectData({
+        projectId: data.projectId,
+        videoDirectory: data.videoDirectory,
+        selectedVideos: data.selectedVideos,
+        fps: data.fps,
+        classes: data.classes || [],
+        attributes: data.attributes || {},
+        numVideos: (data.selectedVideos || []).length
+      });
+      navigate('/annotation');
+    } catch (err) {
+      console.error('Import failed', err);
+      alert('Import failed. Ensure the JSON is a valid export.');
+    } finally {
+      if (importFileRef.current) importFileRef.current.value = '';
+    }
   };
 
   const handleDeleteProject = async () => {
@@ -185,6 +227,22 @@ const ProjectPage = () => {
   return (
     <div className="project-page">
       <h1>LabelMV Project Page</h1>
+
+      {/* Import Project from JSON export */}
+      {authToken && (
+        <section>
+          <h2>Import Project</h2>
+          <p>Import an annotations JSON to create a project with its metadata.</p>
+          <button onClick={handleImportProjectClick}>Import Project JSON</button>
+          <input
+            ref={importFileRef}
+            type="file"
+            accept="application/json"
+            style={{ display: 'none' }}
+            onChange={handleImportProjectFile}
+          />
+        </section>
+      )}
 
       {/* Continue existing project */}
       {authToken && (
