@@ -5,7 +5,6 @@ import "./ProjectPage.css";
 import React, { useState, useContext, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { ProjectContext, AuthContext } from './App';
-const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:56250';
 
 const ProjectPage = () => {
   const [videoDirectory, setVideoDirectory] = useState('');
@@ -125,17 +124,31 @@ const ProjectPage = () => {
   };
 
   // Step 1: Set video directory and fetch videos
-  const handleSetPathClick = () => {
-    fetch(`${API_BASE}/videos?directory=${encodeURIComponent(videoDirectory)}`)
-      .then(response => response.json())
-      .then(data => {
-        if (data.error) {
-          console.error('Error fetching videos:', data.error);
-        } else {
-          setAvailableVideos(data);
-        }
-      })
-      .catch(error => console.error('Error fetching videos:', error));
+  const handleSetPathClick = async () => {
+    try {
+      if (!videoDirectory.trim()) {
+        alert('Please enter a video directory path (e.g., /app/videos).');
+        return;
+      }
+      const res = await fetch(`/videos?directory=${encodeURIComponent(videoDirectory)}`);
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Failed to fetch videos: ${res.status} ${txt}`);
+      }
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setAvailableVideos(data);
+      } else if (data && data.error) {
+        alert(`Error fetching videos: ${data.error}`);
+        setAvailableVideos([]);
+      } else {
+        setAvailableVideos([]);
+      }
+    } catch (err) {
+      console.error('Error fetching videos:', err);
+      alert('Could not list videos. Make sure the directory exists inside the backend container (e.g., /app/videos).');
+      setAvailableVideos([]);
+    }
   };
 
   // Step 2: Set number of videos
@@ -296,7 +309,7 @@ const ProjectPage = () => {
           type="text"
           value={videoDirectory}
           onChange={(e) => setVideoDirectory(e.target.value)}
-          placeholder="Enter path to video directory"
+          placeholder="Enter path to video directory (e.g., /app/videos)"
         />
         <button onClick={handleSetPathClick}>Set Path</button>
       </section>
