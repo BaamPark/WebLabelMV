@@ -1,0 +1,42 @@
+version: "3.9"
+
+services:
+  mongo:
+    image: mongo:6
+    container_name: labelmv-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  backend:
+    build:
+      context: ./labelmv-backend
+    container_name: labelmv-backend
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/labelmv
+      - SECRET_KEY=${SECRET_KEY:-changeme-in-prod}
+    depends_on:
+      - mongo
+    volumes:
+      # Mount videos from host to container; point your project to /app/videos
+      - ./videos:/app/videos:ro
+    ports:
+      - "56250:56250"
+
+  frontend:
+    build:
+      context: ./labelmv-frontend
+      args:
+        # Make '/videos' go to same-origin and be proxied by Nginx
+        REACT_APP_API_BASE: ""
+    container_name: labelmv-frontend
+    depends_on:
+      - backend
+    ports:
+      - "3001:3001"
+
+volumes:
+  mongo-data:
+

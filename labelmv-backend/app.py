@@ -19,12 +19,12 @@ import io
 app = Flask(__name__)
 CORS(app)
 
-# Configure MongoDB connection (replace with your actual MongoDB URI)
-app.config['MONGO_URI'] = 'mongodb://localhost:27017/labelmv'
+# Configure MongoDB connection via env var for containerization
+app.config['MONGO_URI'] = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/labelmv')
 mongo = PyMongo(app)
 
-# Secret key for JWT
-app.config['SECRET_KEY'] = 'your_secret_key_here'
+# Secret key for JWT via env var
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'changeme-in-prod')
 
 # In-memory storage for annotations (for simplicity, will be replaced with database)
 annotations_storage = {}
