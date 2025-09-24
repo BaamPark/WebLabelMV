@@ -7,7 +7,8 @@ import { useNavigate, Link } from 'react-router-dom';
 import { ProjectContext, AuthContext } from './App';
 
 const ProjectPage = () => {
-  const [videoDirectory, setVideoDirectory] = useState('');
+  const DEFAULT_VIDEO_DIR = '/app/videos';
+  const [videoDirectory, setVideoDirectory] = useState(DEFAULT_VIDEO_DIR);
   const [availableVideos, setAvailableVideos] = useState([]);
   const [numVideos, setNumVideos] = useState(1);
   const [selectedVideos, setSelectedVideos] = useState(Array(numVideos).fill(null));
@@ -123,14 +124,10 @@ const ProjectPage = () => {
     }
   };
 
-  // Step 1: Set video directory and fetch videos
+  // Step 1: Fetch videos from fixed directory
   const handleSetPathClick = async () => {
     try {
-      if (!videoDirectory.trim()) {
-        alert('Please enter a video directory path (e.g., /app/videos).');
-        return;
-      }
-      const res = await fetch(`/videos?directory=${encodeURIComponent(videoDirectory)}`);
+      const res = await fetch(`/videos?directory=${encodeURIComponent(DEFAULT_VIDEO_DIR)}`);
       if (!res.ok) {
         const txt = await res.text();
         throw new Error(`Failed to fetch videos: ${res.status} ${txt}`);
@@ -138,6 +135,7 @@ const ProjectPage = () => {
       const data = await res.json();
       if (Array.isArray(data)) {
         setAvailableVideos(data);
+        setVideoDirectory(DEFAULT_VIDEO_DIR);
       } else if (data && data.error) {
         alert(`Error fetching videos: ${data.error}`);
         setAvailableVideos([]);
@@ -146,7 +144,7 @@ const ProjectPage = () => {
       }
     } catch (err) {
       console.error('Error fetching videos:', err);
-      alert('Could not list videos. Make sure the directory exists inside the backend container (e.g., /app/videos).');
+      alert('Could not list videos from /app/videos. Ensure your videos are mounted there.');
       setAvailableVideos([]);
     }
   };
@@ -302,16 +300,14 @@ const ProjectPage = () => {
         </section>
       )}
 
-      {/* Step 1: Video Directory */}
+      {/* Step 1: Video Directory (fixed) */}
       <section>
         <h2>New Project</h2>
-        <input
-          type="text"
-          value={videoDirectory}
-          onChange={(e) => setVideoDirectory(e.target.value)}
-          placeholder="Enter path to video directory (e.g., /app/videos)"
-        />
-        <button onClick={handleSetPathClick}>Set Path</button>
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ fontWeight: 600, marginRight: 8 }}>Video Directory:</label>
+          <code>/app/videos</code>
+        </div>
+        <button onClick={handleSetPathClick}>Load Videos</button>
       </section>
 
       {/* Step 2: Number of Videos (shown after setting path) */}

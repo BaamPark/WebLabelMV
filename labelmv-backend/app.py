@@ -31,10 +31,7 @@ annotations_storage = {}
 
 @app.route('/videos', methods=['GET'])
 def get_videos():
-    directory = request.args.get('directory')
-    if not directory:
-        return jsonify({"error": "Directory parameter is required"}), 400
-
+    directory = request.args.get('directory') or '/app/videos'
     if not os.path.isdir(directory):
         return jsonify({"error": "Invalid directory path"}), 400
 

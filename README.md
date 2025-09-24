@@ -30,7 +30,7 @@ This repository includes a Docker setup that packages the frontend, backend, and
 
 - The compose file mounts the host `./videos` folder into the backend container at `/app/videos` (read-only).
 - Copy or link your video files into the local `videos/` directory.
-- In the Project Page UI, set the “Video Directory” value to `/app/videos` so the backend can read them from the container.
+- The app automatically uses `/app/videos` for projects; no manual path entry is needed.
 
 ### 3) Environment variables
 
@@ -73,4 +73,3 @@ You can still run each part locally outside Docker:
 - `labelmv-frontend/Dockerfile` – React build + Nginx runtime.
 - `labelmv-frontend/nginx.conf` – Proxies API and `/videos` to backend.
 - `labelmv-backend/app.py` – Reads `MONGO_URI` and `SECRET_KEY` from env.
-
