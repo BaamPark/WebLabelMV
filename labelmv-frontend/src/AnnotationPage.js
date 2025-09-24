@@ -676,7 +676,7 @@ const AnnotationPage = () => {
                         >
                           <option value="" disabled>{attrName}</option>
                           {(attributes[attrName] || []).map((opt, i) => (
-                            <option key={`${attrName}-${i}`} value={opt}>{opt}</option>
+                            <option key={`${attrName}-${i}`} value={opt}>{`${attrName} - ${opt}`}</option>
                           ))}
                         </select>
                       ))
