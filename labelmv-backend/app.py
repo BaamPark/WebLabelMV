@@ -29,6 +29,15 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'changeme-in-prod')
 # In-memory storage for annotations (for simplicity, will be replaced with database)
 annotations_storage = {}
 
+def _coerce_project_id(project_id):
+    if isinstance(project_id, ObjectId):
+        return project_id
+    if isinstance(project_id, str) and ObjectId.is_valid(project_id):
+        return ObjectId(project_id)
+    if isinstance(project_id, str):
+        return project_id
+    return None
+
 @app.route('/videos', methods=['GET'])
 def get_videos():
     directory = request.args.get('directory') or '/app/videos'
@@ -153,7 +162,7 @@ def create_or_update_project(current_user):
     classes = data.get('classes') or []
     # optional project-level attributes: { name: [option1, option2, ...], ... }
     raw_attributes = data.get('attributes') or {}
-    project_id = data.get('projectId')  # optional for update
+    project_id = data.get('projectId')  # optional for update/create
 
     if not video_directory or not isinstance(selected_videos, list) or not fps:
         return jsonify({"error": "videoDirectory, selected_videos and fps are required"}), 400
@@ -180,13 +189,24 @@ def create_or_update_project(current_user):
         'updated_at': datetime.datetime.utcnow(),
     }
 
+    if isinstance(project_id, str):
+        project_id = project_id.strip() or None
     if project_id:
+        pid_key = _coerce_project_id(project_id)
+        if pid_key is None:
+            return jsonify({"error": "projectId must be a string"}), 400
         # update existing (ensure ownership)
-        existing = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
-        if not existing or existing.get('user_id') != str(current_user['_id']):
-            return jsonify({"error": "Project not found or unauthorized"}), 404
-        mongo.db.projects.update_one({'_id': ObjectId(project_id)}, {'$set': doc})
-        pid = ObjectId(project_id)
+        existing = mongo.db.projects.find_one({'_id': pid_key})
+        if existing:
+            if existing.get('user_id') != str(current_user['_id']):
+                return jsonify({"error": "Project not found or unauthorized"}), 404
+            mongo.db.projects.update_one({'_id': pid_key}, {'$set': doc})
+            pid = pid_key
+        else:
+            doc['created_at'] = datetime.datetime.utcnow()
+            doc['_id'] = pid_key
+            res = mongo.db.projects.insert_one(doc)
+            pid = res.inserted_id
     else:
         doc['created_at'] = datetime.datetime.utcnow()
         res = mongo.db.projects.insert_one(doc)
@@ -226,10 +246,8 @@ def list_projects(current_user):
 @token_required
 def get_project(current_user, project_id):
     """Return a single project the user owns, including attributes and classes."""
-    try:
-        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
-    except Exception:
-        project = None
+    pid_key = _coerce_project_id(project_id)
+    project = mongo.db.projects.find_one({'_id': pid_key}) if pid_key is not None else None
     if not project or project.get('user_id') != str(current_user['_id']):
         return jsonify({"error": "Project not found or unauthorized"}), 404
 
@@ -249,10 +267,8 @@ def get_project(current_user, project_id):
 @token_required
 def delete_project(current_user, project_id):
     """Delete a project and all related annotations owned by the current user."""
-    try:
-        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
-    except Exception:
-        project = None
+    pid_key = _coerce_project_id(project_id)
+    project = mongo.db.projects.find_one({'_id': pid_key}) if pid_key is not None else None
     if not project or project.get('user_id') != str(current_user['_id']):
         return jsonify({"error": "Project not found or unauthorized"}), 404
 
@@ -277,10 +293,8 @@ def delete_project(current_user, project_id):
 @token_required
 def export_project_annotations(current_user, project_id):
     """Export project metadata and all annotations for this user/project as JSON."""
-    try:
-        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
-    except Exception:
-        project = None
+    pid_key = _coerce_project_id(project_id)
+    project = mongo.db.projects.find_one({'_id': pid_key}) if pid_key is not None else None
     if not project or project.get('user_id') != str(current_user['_id']):
         return jsonify({"error": "Project not found or unauthorized"}), 404
 
@@ -326,14 +340,71 @@ def export_project_annotations(current_user, project_id):
     })
 
 
+@app.route('/api/projects/<project_id>/rename', methods=['POST'])
+@token_required
+def rename_project(current_user, project_id):
+    data = request.get_json(silent=True) or {}
+    new_project_id = data.get('newProjectId')
+    if not isinstance(new_project_id, str) or not new_project_id.strip():
+        return jsonify({"error": "newProjectId is required"}), 400
+    new_project_id = new_project_id.strip()
+
+    old_key = _coerce_project_id(project_id)
+    if old_key is None:
+        return jsonify({"error": "Project not found or unauthorized"}), 404
+
+    project = mongo.db.projects.find_one({'_id': old_key})
+    if not project or project.get('user_id') != str(current_user['_id']):
+        return jsonify({"error": "Project not found or unauthorized"}), 404
+
+    new_key = _coerce_project_id(new_project_id)
+    if new_key is None:
+        return jsonify({"error": "newProjectId must be a string"}), 400
+
+    if str(project.get('_id')) == str(new_key):
+        return jsonify({"error": "newProjectId is the same as current"}), 400
+
+    if mongo.db.projects.find_one({'_id': new_key}):
+        return jsonify({"error": "Project ID already exists"}), 409
+
+    new_doc = dict(project)
+    new_doc['_id'] = new_key
+    new_doc['updated_at'] = datetime.datetime.utcnow()
+    mongo.db.projects.insert_one(new_doc)
+
+    old_id_str = str(project.get('_id'))
+    new_id_str = str(new_key)
+    mongo.db.annotations.update_many(
+        {
+            'user_id': str(current_user['_id']),
+            'project_id': old_id_str
+        },
+        {
+            '$set': {
+                'project_id': new_id_str,
+                'updated_at': datetime.datetime.utcnow(),
+            }
+        }
+    )
+
+    mongo.db.projects.delete_one({'_id': project['_id']})
+
+    return jsonify({
+        'projectId': new_id_str,
+        'videoDirectory': new_doc.get('video_directory'),
+        'selectedVideos': new_doc.get('selected_videos') or [],
+        'fps': int(new_doc.get('fps') or 1),
+        'classes': new_doc.get('classes') or [],
+        'attributes': new_doc.get('attributes') or {},
+    })
+
+
 @app.route('/api/projects/<project_id>/import', methods=['POST'])
 @token_required
 def import_project_annotations(current_user, project_id):
     """Import annotations JSON for this project. Optionally updates classes/attributes."""
-    try:
-        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
-    except Exception:
-        project = None
+    pid_key = _coerce_project_id(project_id)
+    project = mongo.db.projects.find_one({'_id': pid_key}) if pid_key is not None else None
     if not project or project.get('user_id') != str(current_user['_id']):
         return jsonify({"error": "Project not found or unauthorized"}), 404
 
@@ -532,10 +603,8 @@ def _video_info_for(project, video_index):
 @app.route('/api/projects/<project_id>/video_info', methods=['GET'])
 @token_required
 def get_video_info(current_user, project_id):
-    try:
-        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
-    except Exception:
-        project = None
+    pid_key = _coerce_project_id(project_id)
+    project = mongo.db.projects.find_one({'_id': pid_key}) if pid_key is not None else None
     if not project or project.get('user_id') != str(current_user['_id']):
         return jsonify({"error": "Project not found or unauthorized"}), 404
 
@@ -557,10 +626,8 @@ def get_video_info(current_user, project_id):
 @app.route('/api/projects/<project_id>/frame', methods=['GET'])
 @token_required
 def get_frame(current_user, project_id):
-    try:
-        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
-    except Exception:
-        project = None
+    pid_key = _coerce_project_id(project_id)
+    project = mongo.db.projects.find_one({'_id': pid_key}) if pid_key is not None else None
     if not project or project.get('user_id') != str(current_user['_id']):
         return jsonify({"error": "Project not found or unauthorized"}), 404
 
@@ -602,10 +669,8 @@ def get_frame(current_user, project_id):
 @app.route('/api/projects/<project_id>/annotations', methods=['GET'])
 @token_required
 def get_frame_annotations(current_user, project_id):
-    try:
-        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
-    except Exception:
-        project = None
+    pid_key = _coerce_project_id(project_id)
+    project = mongo.db.projects.find_one({'_id': pid_key}) if pid_key is not None else None
     if not project or project.get('user_id') != str(current_user['_id']):
         return jsonify({"error": "Project not found or unauthorized"}), 404
 
@@ -627,10 +692,8 @@ def get_frame_annotations(current_user, project_id):
 @app.route('/api/projects/<project_id>/annotations', methods=['POST'])
 @token_required
 def save_frame_annotations(current_user, project_id):
-    try:
-        project = mongo.db.projects.find_one({'_id': ObjectId(project_id)})
-    except Exception:
-        project = None
+    pid_key = _coerce_project_id(project_id)
+    project = mongo.db.projects.find_one({'_id': pid_key}) if pid_key is not None else None
     if not project or project.get('user_id') != str(current_user['_id']):
         return jsonify({"error": "Project not found or unauthorized"}), 404
 

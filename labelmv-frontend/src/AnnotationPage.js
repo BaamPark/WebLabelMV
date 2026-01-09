@@ -21,9 +21,10 @@ const AnnotationPage = () => {
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [pendingIndex, setPendingIndex] = useState(null);
 
-  const { projectData } = useContext(ProjectContext);
+  const { projectData, setProjectData } = useContext(ProjectContext);
   const { authToken } = useContext(AuthContext);
   const { numVideos = 1, projectId, classes = [], attributes = {}, selectedVideos: projectSelectedVideos = [] } = projectData;
+  const [projectIdInput, setProjectIdInput] = useState(projectId || '');
 
   const containerRef = useRef(null);
   const imageRef = useRef(null);
@@ -85,6 +86,10 @@ const AnnotationPage = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedVideoIndex, projectId]);
+
+  useEffect(() => {
+    setProjectIdInput(projectId || '');
+  }, [projectId]);
 
   // Trigger re-render on window resize so boxes recompute positions
   useEffect(() => {
@@ -149,6 +154,38 @@ const AnnotationPage = () => {
 
     // Update selected video index
     setSelectedVideoIndex(newIndex);
+  };
+
+  const handleProjectIdRename = async () => {
+    const nextId = projectIdInput.trim();
+    if (!projectId || !nextId || nextId === projectId) return;
+    try {
+      const resp = await fetch(`/api/projects/${projectId}/rename`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ newProjectId: nextId })
+      });
+      if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`rename ${resp.status}: ${txt}`);
+      }
+      const data = await resp.json();
+      setProjectData({
+        projectId: data.projectId,
+        videoDirectory: data.videoDirectory,
+        selectedVideos: data.selectedVideos || [],
+        fps: data.fps || 1,
+        classes: data.classes || [],
+        attributes: data.attributes || {},
+        numVideos: (data.selectedVideos || []).length
+      });
+    } catch (e) {
+      console.error('Failed to rename project', e);
+      alert('Failed to rename project. Check the new project ID.');
+    }
   };
 
   const fetchVideoInfo = async (videoIndex) => {
@@ -325,12 +362,12 @@ const AnnotationPage = () => {
         return;
       }
       setBoundingBoxes(data);
-      const ok = await saveAnnotations(selectedVideoIndex, sampleIndex);
-      alert(ok ? 'Prelabel loaded' : 'Loaded, but saving failed');
-    } catch (e) {
-      console.error('Load prelabel failed', e);
-      alert('Failed to load prelabel');
-    }
+      
+      await saveAnnotations(selectedVideoIndex, sampleIndex);
+      } catch (e) {
+        console.error('Load prelabel failed', e);
+        alert('Failed to load prelabel');
+      }
   };
 
   // Import moved to Project Page
@@ -619,6 +656,21 @@ const AnnotationPage = () => {
 
         {/* Right sidebar for video selection and annotation list */}
         <aside className="sidebar-right">
+          <div className="project-id-switch">
+            <h4>Project ID</h4>
+            <input
+              type="text"
+              value={projectIdInput}
+              onChange={(e) => setProjectIdInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleProjectIdRename();
+              }}
+              placeholder="Rename project ID"
+            />
+            <button className="btn btn-secondary" onClick={handleProjectIdRename} disabled={!projectId}>
+              Rename Project
+            </button>
+          </div>
           {/* Video selection dropdown */}
           <div className="video-selection">
             <h4>Select Video</h4>

@@ -15,6 +15,7 @@ const ProjectPage = () => {
   const [frameRate, setFrameRate] = useState(1);
   const [classesText, setClassesText] = useState("");
   const [attributesText, setAttributesText] = useState("");
+  const [manualProjectId, setManualProjectId] = useState("");
   
   const [existingProjects, setExistingProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -200,19 +201,25 @@ const ProjectPage = () => {
         }
       });
 
+      const payload = {
+        videoDirectory,
+        selectedVideos,
+        fps: frameRate,
+        classes,
+        attributes
+      };
+      const trimmedProjectId = manualProjectId.trim();
+      if (trimmedProjectId) {
+        payload.projectId = trimmedProjectId;
+      }
+
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${authToken}`
         },
-        body: JSON.stringify({
-          videoDirectory,
-          selectedVideos,
-          fps: frameRate,
-          classes,
-          attributes
-        })
+        body: JSON.stringify(payload)
       });
       if (!res.ok) {
         const txt = await res.text();
@@ -271,7 +278,7 @@ const ProjectPage = () => {
                 <option value="">Select a project…</option>
                 {existingProjects.map((p) => (
                   <option key={p.projectId} value={p.projectId}>
-                    {p.projectId.slice(-6)} • {p.videoDirectory} • {p.selectedVideos?.length || 0} vids • {p.fps} fps
+                    {p.projectId.slice(0, 15)} • {p.videoDirectory} • {p.selectedVideos?.length || 0} vids • {p.fps} fps
                   </option>
                 ))}
               </select>
@@ -303,6 +310,16 @@ const ProjectPage = () => {
       {/* Step 1: Video Directory (fixed) */}
       <section>
         <h2>New Project</h2>
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ fontWeight: 600, marginRight: 8 }}>Project ID (optional):</label>
+          <input
+            type="text"
+            value={manualProjectId}
+            onChange={(e) => setManualProjectId(e.target.value)}
+            placeholder="Leave blank to auto-generate"
+            style={{ width: '100%', maxWidth: 360 }}
+          />
+        </div>
         <div style={{ marginBottom: 8 }}>
           <label style={{ fontWeight: 600, marginRight: 8 }}>Video Directory:</label>
           <code>/app/videos</code>
