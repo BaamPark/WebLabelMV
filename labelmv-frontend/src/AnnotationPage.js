@@ -528,6 +528,10 @@ const AnnotationPage = () => {
     }
   };
 
+  const handleAutoLabel = () => {
+    window.prompt('Enter auto-label text');
+  };
+
   return (
     <div
       className="annotation-page"
@@ -576,6 +580,11 @@ const AnnotationPage = () => {
           <button className="btn btn-secondary" onClick={handleLoadPrelabel}>Load prelabel</button>
           <button className="btn btn-secondary" onClick={handleExport}>Export Annotations</button>
           {/* Import moved to Project Page */}
+          <div className="tool-divider">
+            <h3>Automation</h3>
+            <button className="btn btn-secondary" type="button" onClick={handleAutoLabel}>Auto Label</button>
+            <button className="btn btn-secondary" type="button">Auto Track</button>
+          </div>
         </aside>
 
         {/* Center area for video/image display */}

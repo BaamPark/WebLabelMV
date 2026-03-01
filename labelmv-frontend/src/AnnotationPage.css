@@ -56,6 +56,13 @@ body {
   gap: 8px;
 }
 
+.tool-divider {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .sidebar-right {
   border-right: none;
   border-left: 1px solid #ddd;

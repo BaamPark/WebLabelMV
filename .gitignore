@@ -2,3 +2,7 @@
 .downloads/
 .vscode/
 videos/
+*.png
+*reference/
+*.log
+robots.txt
