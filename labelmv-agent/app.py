@@ -22,7 +22,7 @@ app.config['MONGO_URI'] = os.environ.get('MONGO_URI', 'mongodb://localhost:27017
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'changeme-in-prod')
 mongo = PyMongo(app)
 
-OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'qwen3-vl:8b')
+OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'qwen3-vl:8b-instruct')
 OLLAMA_HOST = os.environ.get('OLLAMA_HOST')
 OLLAMA_TIMEOUT = float(os.environ.get('OLLAMA_TIMEOUT', '180'))
 
@@ -132,6 +132,22 @@ def _extract_json_object(text):
     except json.JSONDecodeError:
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def _extract_json_block(text):
+    if not text:
+        return None
+    cleaned = text.strip()
+    match = re.search(r"```json\s*(.*?)\s*```", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    if not match:
+        match = re.search(r"```\s*(.*?)\s*```", cleaned, flags=re.DOTALL)
+    if not match:
+        return None
+    snippet = match.group(1)
+    try:
+        return json.loads(snippet)
+    except json.JSONDecodeError:
+        return None
 
 
 def _normalize_detections(raw):
@@ -431,6 +447,87 @@ def classify_attributes():
         "success": True,
         "raw": model_text,
         "attributes": parsed_attrs if isinstance(parsed_attrs, dict) else None
+    })
+
+
+@app.route('/agent/associate_id', methods=['POST'])
+def associate_id():
+    user_id, err = _decode_user_id(request.headers.get('Authorization'))
+    if err:
+        return jsonify({"error": err}), 403
+
+    ref_view_raw = request.form.get('referenceViewIndex')
+    target_view_raw = request.form.get('targetViewIndex')
+    bbox_raw = request.form.get('bbox')
+    object_id = request.form.get('objectId')
+    ref_image = request.files.get('referenceImage') or request.files.get('refImage')
+    target_image = request.files.get('targetImage') or request.files.get('tgtImage')
+
+    logger.info(
+        "Associate raw input user=%s referenceViewIndex=%s targetViewIndex=%s bbox_raw=%s objectId=%s",
+        user_id, ref_view_raw, target_view_raw, bbox_raw, object_id
+    )
+
+    if not bbox_raw or ref_image is None or target_image is None:
+        return jsonify({"error": "bbox, referenceImage, and targetImage are required"}), 400
+
+    try:
+        bbox = json.loads(bbox_raw)
+    except json.JSONDecodeError:
+        return jsonify({"error": "bbox must be valid JSON"}), 400
+
+    if not isinstance(bbox, dict):
+        return jsonify({"error": "bbox must be an object"}), 400
+
+    try:
+        x1 = int(bbox.get('x1'))
+        y1 = int(bbox.get('y1'))
+        x2 = int(bbox.get('x2'))
+        y2 = int(bbox.get('y2'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "bbox values must be integers"}), 400
+
+    prompt = (
+        "Given two images, the first image is the reference view and the second image is the target view. "
+        "find the same person in the target view as the one inside the reference bounding box "
+        f"<|box_start|>({x1},{y1}),({x2},{y2})<|box_end|> in the reference view. "
+        "Wrap the JSON in a ```json``` fenced block with no other text.\n"
+        "{\"bbox_2d\": [x1, y1, x2, y2]}\n"
+    )
+    logger.info("Model:%s ", OLLAMA_MODEL)
+    logger.info("Associate prompt user=%s prompt=%s", user_id, prompt)
+
+    ref_bytes = ref_image.read()
+    target_bytes = target_image.read()
+
+    try:
+        response = ollama_client.chat(
+            model=OLLAMA_MODEL,
+            messages=[{
+                "role": "user",
+                "content": prompt,
+                "images": [ref_bytes, target_bytes],
+            }],
+        )
+    except Exception as exc:
+        return jsonify({"error": f"Ollama request failed: {exc}"}), 502
+
+    if isinstance(response, dict):
+        model_text = response.get('message', {}).get('content', '')
+    else:
+        message = getattr(response, 'message', None)
+        if isinstance(message, dict):
+            model_text = message.get('content', '')
+        else:
+            model_text = getattr(message, 'content', '') if message is not None else ''
+
+    logger.info("Associate response user=%s response=%s", user_id, model_text)
+
+    parsed = _extract_json_block(model_text)
+    return jsonify({
+        "success": True,
+        "raw": model_text,
+        "result": parsed
     })
 
 

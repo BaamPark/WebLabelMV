@@ -22,6 +22,9 @@ const AnnotationPage = () => {
   const [pendingIndex, setPendingIndex] = useState(null);
   const [isClassifyModalOpen, setIsClassifyModalOpen] = useState(false);
   const [classifyBoxId, setClassifyBoxId] = useState(null);
+  const [isAssociateModalOpen, setIsAssociateModalOpen] = useState(false);
+  const [associateBoxId, setAssociateBoxId] = useState(null);
+  const [associateTargetVideoIndex, setAssociateTargetVideoIndex] = useState(0);
 
   const { projectData, setProjectData } = useContext(ProjectContext);
   const { authToken } = useContext(AuthContext);
@@ -620,6 +623,125 @@ const AnnotationPage = () => {
     setIsClassifyModalOpen(false);
   };
 
+  const handleOpenAssociate = () => {
+    const eligible = (boundingBoxes || []).filter(
+      (box) => box.objectId != null && box.objectId !== 0
+    );
+    if (eligible.length === 0) {
+      window.alert('No boxes with a non-zero ID in this frame.');
+      return;
+    }
+    const currentViewIndex = Number(selectedVideoIndex);
+    const filteredViews = [...Array(numVideos).keys()].filter((i) => i !== currentViewIndex);
+    setAssociateBoxId(eligible[0].id);
+    const fallbackTarget = filteredViews[0];
+    setAssociateTargetVideoIndex(fallbackTarget != null ? fallbackTarget : currentViewIndex);
+    setIsAssociateModalOpen(true);
+  };
+
+  const handleCloseAssociate = () => {
+    setIsAssociateModalOpen(false);
+  };
+
+  const handleConfirmAssociate = async () => {
+    if (associateBoxId != null) {
+      setSelectedBoxId(associateBoxId);
+      const target = boundingBoxes.find((box) => box.id === associateBoxId);
+      if (target) {
+        const x1 = Math.round(target.left * 1000);
+        const y1 = Math.round(target.top * 1000);
+        const x2 = Math.round((target.left + target.width) * 1000);
+        const y2 = Math.round((target.top + target.height) * 1000);
+        try {
+          if (!frameUrl) {
+            throw new Error('No reference frame available');
+          }
+          const refBlob = await fetch(frameUrl).then((res) => res.blob());
+          const targetFrameResp = await fetch(
+            `/api/projects/${projectId}/frame?video_index=${associateTargetVideoIndex}&sample_index=${sampleIndex}`,
+            {
+              headers: { 'Authorization': `Bearer ${authToken}` }
+            }
+          );
+          if (!targetFrameResp.ok) {
+            const txt = await targetFrameResp.text();
+            throw new Error(`target frame ${targetFrameResp.status}: ${txt}`);
+          }
+          const targetBlob = await targetFrameResp.blob();
+          const formData = new FormData();
+          formData.append('referenceViewIndex', String(selectedVideoIndex));
+          formData.append('targetViewIndex', String(associateTargetVideoIndex));
+          formData.append('bbox', JSON.stringify({ x1, y1, x2, y2 }));
+          formData.append('objectId', String(target.objectId || 0));
+          formData.append('referenceImage', refBlob, 'reference.jpg');
+          formData.append('targetImage', targetBlob, 'target.jpg');
+          const resp = await fetch('/agent/associate_id', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${authToken}`
+            },
+            body: formData
+          });
+          if (!resp.ok) {
+            const txt = await resp.text();
+            throw new Error(`associate ${resp.status}: ${txt}`);
+          }
+          const data = await resp.json();
+          const bbox2d = data && data.result && data.result.bbox_2d;
+          if (!Array.isArray(bbox2d) || bbox2d.length !== 4) {
+            window.alert(`Associate returned no JSON.\nAgent response: ${data && data.raw ? data.raw : ''}`);
+            return;
+          }
+          const [tx1, ty1, tx2, ty2] = bbox2d.map((v) => Number(v));
+          const left = Math.min(tx1, tx2) / 1000;
+          const top = Math.min(ty1, ty2) / 1000;
+          const width = Math.abs(tx2 - tx1) / 1000;
+          const height = Math.abs(ty2 - ty1) / 1000;
+          const defaultAttrs = Object.fromEntries(
+            Object.keys(attributes || {}).map((name) => [name, ''])
+          );
+          const newBox = {
+            id: Date.now(),
+            left: Math.max(0, Math.min(1, left)),
+            top: Math.max(0, Math.min(1, top)),
+            width: Math.max(0.001, Math.min(1, width)),
+            height: Math.max(0.001, Math.min(1, height)),
+            className: target.className || (classes[0] || ''),
+            objectId: target.objectId || 0,
+            attributes: defaultAttrs
+          };
+          const existingResp = await fetch(
+            `/api/projects/${projectId}/annotations?video_index=${associateTargetVideoIndex}&sample_index=${sampleIndex}`,
+            { headers: { 'Authorization': `Bearer ${authToken}` } }
+          );
+          const existingBoxes = existingResp.ok ? await existingResp.json() : [];
+          const merged = Array.isArray(existingBoxes) ? existingBoxes.slice() : [];
+          const idx = merged.findIndex((b) => b.objectId === newBox.objectId);
+          if (idx >= 0) {
+            merged[idx] = { ...merged[idx], ...newBox, id: merged[idx].id || newBox.id };
+          } else {
+            merged.push(newBox);
+          }
+          await fetch(
+            `/api/projects/${projectId}/annotations?video_index=${associateTargetVideoIndex}&sample_index=${sampleIndex}`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`
+              },
+              body: JSON.stringify(merged)
+            }
+          );
+        } catch (err) {
+          console.error('Associate ID failed', err);
+          window.alert('Associate ID failed.');
+        }
+      }
+    }
+    setIsAssociateModalOpen(false);
+  };
+
   const handleDetectObject = async () => {
     if (!projectId) return;
     const label = window.prompt('Enter object label (e.g., person)');
@@ -718,6 +840,7 @@ const AnnotationPage = () => {
             <h3>Automation</h3>
             <button className="btn btn-secondary" type="button" onClick={handleDetectObject}>Detect object</button>
             <button className="btn btn-secondary" type="button" onClick={handleOpenClassify}>Classify attributes</button>
+            <button className="btn btn-secondary" type="button" onClick={handleOpenAssociate}>Associate ID</button>
           </div>
         </aside>
 
@@ -899,6 +1022,45 @@ const AnnotationPage = () => {
             <div className="modal-actions">
               <button className="btn btn-secondary" type="button" onClick={handleCloseClassify}>Cancel</button>
               <button className="btn btn-primary" type="button" onClick={handleConfirmClassify}>Select</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {isAssociateModalOpen && (
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <h3>Select a box with ID</h3>
+            <select
+              value={associateBoxId || ''}
+              onChange={(e) => setAssociateBoxId(parseInt(e.target.value, 10))}
+            >
+              {boundingBoxes
+                .filter((box) => box.objectId != null && box.objectId !== 0)
+                .map((box, idx) => (
+                  <option key={box.id} value={box.id}>
+                    Box {idx + 1} (ID {box.objectId})
+                  </option>
+                ))}
+            </select>
+            <div>
+              <label htmlFor="associate-target-view">Target view</label>
+              <select
+                id="associate-target-view"
+                value={associateTargetVideoIndex}
+                onChange={(e) => setAssociateTargetVideoIndex(parseInt(e.target.value, 10))}
+              >
+                {[...Array(numVideos).keys()]
+                  .filter((i) => i !== Number(selectedVideoIndex))
+                  .map((i) => (
+                    <option key={i} value={i}>
+                      {i}: {projectSelectedVideos[i] || `video_${i + 1}`}
+                    </option>
+                  ))}
+              </select>
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" type="button" onClick={handleCloseAssociate}>Cancel</button>
+              <button className="btn btn-primary" type="button" onClick={handleConfirmAssociate}>Select</button>
             </div>
           </div>
         </div>

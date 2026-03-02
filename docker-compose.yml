@@ -30,7 +30,7 @@ services:
     environment:
       - MONGO_URI=mongodb://mongo:27017/labelmv
       - SECRET_KEY=${SECRET_KEY:-changeme-in-prod}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3-vl:8b}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3-vl:8b-instruct}
       - OLLAMA_HOST=${OLLAMA_HOST:-http://192.168.191.130:11434}
     depends_on:
       - mongo
