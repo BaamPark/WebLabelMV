@@ -528,8 +528,50 @@ const AnnotationPage = () => {
     }
   };
 
-  const handleAutoLabel = () => {
-    window.prompt('Enter auto-label text');
+  const handleDetectObject = async () => {
+    if (!projectId) return;
+    const label = window.prompt('Enter object label (e.g., person)');
+    if (!label) return;
+    console.log('Detect object submit:', label);
+    try {
+      const resp = await fetch('/agent/detect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          projectId,
+          videoIndex: selectedVideoIndex,
+          sampleIndex,
+          label
+        })
+      });
+      let data = null;
+      let rawText = '';
+      if (!resp.ok) {
+        try {
+          data = await resp.json();
+          rawText = typeof data.raw === 'string' ? data.raw : '';
+        } catch (err) {
+          rawText = await resp.text();
+        }
+        window.alert(`Detection failed\nAgent response: ${rawText || 'No response body'}`);
+        return;
+      }
+      data = await resp.json();
+      if (data && typeof data.raw === 'string') {
+        window.alert(data.raw);
+      }
+      if (data && Array.isArray(data.boxes)) {
+        setBoundingBoxes(data.boxes);
+      } else {
+        await fetchAnnotations(selectedVideoIndex, sampleIndex);
+      }
+    } catch (e) {
+      console.error('Detect object failed', e);
+      alert('Detect object failed');
+    }
   };
 
   return (
@@ -582,7 +624,7 @@ const AnnotationPage = () => {
           {/* Import moved to Project Page */}
           <div className="tool-divider">
             <h3>Automation</h3>
-            <button className="btn btn-secondary" type="button" onClick={handleAutoLabel}>Auto Label</button>
+            <button className="btn btn-secondary" type="button" onClick={handleDetectObject}>Detect object</button>
             <button className="btn btn-secondary" type="button">Auto Track</button>
           </div>
         </aside>

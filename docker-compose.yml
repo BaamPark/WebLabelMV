@@ -23,6 +23,24 @@ services:
     ports:
       - "56250:56250"
 
+  agent:
+    build:
+      context: ./labelmv-agent
+    container_name: labelmv-agent
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/labelmv
+      - SECRET_KEY=${SECRET_KEY:-changeme-in-prod}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3-vl:8b}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://192.168.191.130:11434}
+    depends_on:
+      - mongo
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./videos:/app/videos:ro
+    ports:
+      - "56260:56260"
+
   frontend:
     build:
       context: ./labelmv-frontend
