@@ -117,6 +117,23 @@ def _extract_json_array(text):
     return json.loads(snippet)
 
 
+def _extract_json_object(text):
+    if not text:
+        return None
+    cleaned = text.strip()
+    match = re.search(r"```json\s*(\{.*?\})\s*```", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    if not match:
+        match = re.search(r"```\s*(\{.*?\})\s*```", cleaned, flags=re.DOTALL)
+    if not match:
+        return None
+    snippet = match.group(1)
+    try:
+        parsed = json.loads(snippet)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _normalize_detections(raw):
     detections = []
     if isinstance(raw, dict) and isinstance(raw.get('boxes'), list):
@@ -313,6 +330,107 @@ def detect_objects():
         "boxes": boxes,
         "detections": detections,
         "raw": model_text,
+    })
+
+
+@app.route('/agent/log_box', methods=['POST'])
+def log_box():
+    user_id, err = _decode_user_id(request.headers.get('Authorization'))
+    if err:
+        return jsonify({"error": err}), 403
+    payload = request.get_json(silent=True) or {}
+    input_box = payload.get('input')
+    output_box = payload.get('output')
+    if not isinstance(input_box, dict) or not isinstance(output_box, dict):
+        return jsonify({"error": "input and output are required"}), 400
+    logger.info("Classify input (left/top/width/height) user=%s data=%s", user_id, input_box)
+    logger.info("Classify normalized (x1,y1,x2,y2) user=%s data=%s", user_id, output_box)
+    return jsonify({"success": True})
+
+
+@app.route('/agent/classify_attributes', methods=['POST'])
+def classify_attributes():
+    user_id, err = _decode_user_id(request.headers.get('Authorization'))
+    if err:
+        return jsonify({"error": err}), 403
+
+    bbox_raw = request.form.get('bbox')
+    input_raw = request.form.get('input')
+    attr_desc_raw = request.form.get('attributeDescriptions')
+    image = request.files.get('image')
+
+    if not bbox_raw or not image:
+        return jsonify({"error": "bbox and image are required"}), 400
+
+    try:
+        bbox = json.loads(bbox_raw)
+    except json.JSONDecodeError:
+        return jsonify({"error": "bbox must be valid JSON"}), 400
+
+    try:
+        input_box = json.loads(input_raw) if input_raw else {}
+    except json.JSONDecodeError:
+        input_box = {}
+
+    try:
+        attr_desc = json.loads(attr_desc_raw) if attr_desc_raw else {}
+    except json.JSONDecodeError:
+        return jsonify({"error": "attributeDescriptions must be valid JSON"}), 400
+
+    if not isinstance(bbox, dict):
+        return jsonify({"error": "bbox must be an object"}), 400
+
+    try:
+        x1 = int(bbox.get('x1'))
+        y1 = int(bbox.get('y1'))
+        x2 = int(bbox.get('x2'))
+        y2 = int(bbox.get('y2'))
+    except (TypeError, ValueError):
+        return jsonify({"error": "bbox values must be integers"}), 400
+
+    prompt = (
+        "Classify attributes for the region "
+        f"<|box_start|>({x1},{y1}),({x2},{y2})<|box_end|>. "
+        "Use the following attribute descriptions and return JSON only. "
+        "Wrap the JSON in a ```json``` fenced block with no other text.\n"
+        f"Attribute descriptions:\n{json.dumps(attr_desc, ensure_ascii=False)}"
+    )
+    logger.info("Prompt=%s", prompt)
+
+    image_bytes = image.read()
+    try:
+        response = ollama_client.chat(
+            model=OLLAMA_MODEL,
+            messages=[{
+                "role": "user",
+                "content": prompt,
+                "images": [image_bytes],
+            }],
+        )
+    except Exception as exc:
+        return jsonify({"error": f"Ollama request failed: {exc}"}), 502
+
+    if isinstance(response, dict):
+        model_text = response.get('message', {}).get('content', '')
+    else:
+        message = getattr(response, 'message', None)
+        if isinstance(message, dict):
+            model_text = message.get('content', '')
+        else:
+            model_text = getattr(message, 'content', '') if message is not None else ''
+
+    logger.info("Classify response user=%s response=%s", user_id, model_text)
+
+    parsed_attrs = None
+    try:
+        parsed_attrs = _extract_json_object(model_text)
+    except json.JSONDecodeError:
+        parsed_attrs = None
+
+    return jsonify({
+        "success": True,
+        "raw": model_text,
+        "attributes": parsed_attrs if isinstance(parsed_attrs, dict) else None
     })
 
 

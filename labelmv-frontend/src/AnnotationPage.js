@@ -20,10 +20,19 @@ const AnnotationPage = () => {
   const [viewportSize, setViewportSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [pendingIndex, setPendingIndex] = useState(null);
+  const [isClassifyModalOpen, setIsClassifyModalOpen] = useState(false);
+  const [classifyBoxId, setClassifyBoxId] = useState(null);
 
   const { projectData, setProjectData } = useContext(ProjectContext);
   const { authToken } = useContext(AuthContext);
-  const { numVideos = 1, projectId, classes = [], attributes = {}, selectedVideos: projectSelectedVideos = [] } = projectData;
+  const {
+    numVideos = 1,
+    projectId,
+    classes = [],
+    attributes = {},
+    attributeDescriptions = {},
+    selectedVideos: projectSelectedVideos = []
+  } = projectData;
   const [projectIdInput, setProjectIdInput] = useState(projectId || '');
 
   const containerRef = useRef(null);
@@ -528,6 +537,89 @@ const AnnotationPage = () => {
     }
   };
 
+  const handleOpenClassify = () => {
+    if (!boundingBoxes || boundingBoxes.length === 0) {
+      window.alert('No boxes available in this frame.');
+      return;
+    }
+    setClassifyBoxId(boundingBoxes[0].id);
+    setIsClassifyModalOpen(true);
+  };
+
+  const handleCloseClassify = () => {
+    setIsClassifyModalOpen(false);
+  };
+
+  const handleConfirmClassify = async () => {
+    if (classifyBoxId != null) {
+      const target = boundingBoxes.find((box) => box.id === classifyBoxId);
+      if (target) {
+        const inputLog = {
+          left: Number(target.left.toFixed(2)),
+          top: Number(target.top.toFixed(2)),
+          width: Number(target.width.toFixed(2)),
+          height: Number(target.height.toFixed(2)),
+        };
+        const x1 = Math.round(target.left * 1000);
+        const y1 = Math.round(target.top * 1000);
+        const x2 = Math.round((target.left + target.width) * 1000);
+        const y2 = Math.round((target.top + target.height) * 1000);
+
+        if (!frameUrl) {
+          window.alert('No frame available for classification.');
+        } else {
+          try {
+            const blob = await fetch(frameUrl).then((res) => res.blob());
+            const formData = new FormData();
+            formData.append('projectId', projectId);
+            formData.append('videoIndex', String(selectedVideoIndex));
+            formData.append('sampleIndex', String(sampleIndex));
+            formData.append('input', JSON.stringify(inputLog));
+            formData.append('bbox', JSON.stringify({ x1, y1, x2, y2 }));
+            formData.append('attributeDescriptions', JSON.stringify(attributeDescriptions || {}));
+            formData.append('image', blob, 'frame.jpg');
+
+            const resp = await fetch('/agent/classify_attributes', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${authToken}`
+              },
+              body: formData
+            });
+            if (!resp.ok) {
+              const txt = await resp.text();
+              throw new Error(`classify ${resp.status}: ${txt}`);
+            }
+            const data = await resp.json();
+            if (data && data.attributes && typeof data.attributes === 'object') {
+              const attrKeyMap = {};
+              Object.keys(attributes || {}).forEach((name) => {
+                attrKeyMap[name.toLowerCase()] = name;
+              });
+              setBoundingBoxes((prev) => prev.map((box) => {
+                if (box.id !== classifyBoxId) return box;
+                const nextAttrs = { ...(box.attributes || {}) };
+                Object.entries(data.attributes).forEach(([key, value]) => {
+                  const canonical = attrKeyMap[String(key).toLowerCase()] || key;
+                  if (value == null) return;
+                  nextAttrs[canonical] = String(value);
+                });
+                return { ...box, attributes: nextAttrs };
+              }));
+            } else {
+              window.alert(`Classify returned no JSON.\nAgent response: ${data && data.raw ? data.raw : ''}`);
+            }
+          } catch (err) {
+            console.error('Classify attributes failed', err);
+            window.alert('Classify attributes failed.');
+          }
+        }
+      }
+      setSelectedBoxId(classifyBoxId);
+    }
+    setIsClassifyModalOpen(false);
+  };
+
   const handleDetectObject = async () => {
     if (!projectId) return;
     const label = window.prompt('Enter object label (e.g., person)');
@@ -625,7 +717,7 @@ const AnnotationPage = () => {
           <div className="tool-divider">
             <h3>Automation</h3>
             <button className="btn btn-secondary" type="button" onClick={handleDetectObject}>Detect object</button>
-            <button className="btn btn-secondary" type="button" disabled>Classify attributes</button>
+            <button className="btn btn-secondary" type="button" onClick={handleOpenClassify}>Classify attributes</button>
           </div>
         </aside>
 
@@ -792,6 +884,25 @@ const AnnotationPage = () => {
           </ul>
         </aside>
       </div>
+      {isClassifyModalOpen && (
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <h3>Select a box</h3>
+            <select
+              value={classifyBoxId || ''}
+              onChange={(e) => setClassifyBoxId(parseInt(e.target.value, 10))}
+            >
+              {boundingBoxes.map((box, idx) => (
+                <option key={box.id} value={box.id}>Box {idx + 1}</option>
+              ))}
+            </select>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" type="button" onClick={handleCloseClassify}>Cancel</button>
+              <button className="btn btn-primary" type="button" onClick={handleConfirmClassify}>Select</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
