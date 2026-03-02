@@ -162,6 +162,7 @@ def create_or_update_project(current_user):
     classes = data.get('classes') or []
     # optional project-level attributes: { name: [option1, option2, ...], ... }
     raw_attributes = data.get('attributes') or {}
+    raw_attribute_descriptions = data.get('attributeDescriptions') or {}
     project_id = data.get('projectId')  # optional for update/create
 
     if not video_directory or not isinstance(selected_videos, list) or not fps:
@@ -179,6 +180,20 @@ def create_or_update_project(current_user):
                 if opts:
                     attributes[k] = opts
 
+    attribute_descriptions = {}
+    if isinstance(raw_attribute_descriptions, dict):
+        for attr_name, codes in raw_attribute_descriptions.items():
+            if not isinstance(attr_name, str) or not isinstance(codes, dict):
+                continue
+            sanitized = {}
+            for code, desc in codes.items():
+                if not isinstance(code, str):
+                    continue
+                if isinstance(desc, (str, int, float)):
+                    sanitized[code] = str(desc)
+            if sanitized:
+                attribute_descriptions[attr_name] = sanitized
+
     doc = {
         'user_id': str(current_user['_id']),
         'video_directory': video_directory,
@@ -186,6 +201,7 @@ def create_or_update_project(current_user):
         'fps': int(fps),
         'classes': classes,
         'attributes': attributes,
+        'attribute_descriptions': attribute_descriptions,
         'updated_at': datetime.datetime.utcnow(),
     }
 
@@ -218,7 +234,8 @@ def create_or_update_project(current_user):
         'selectedVideos': selected_videos,
         'fps': int(fps),
         'classes': classes,
-        'attributes': attributes
+        'attributes': attributes,
+        'attributeDescriptions': attribute_descriptions
     })
 
 @app.route('/api/projects', methods=['GET'])
@@ -236,6 +253,7 @@ def list_projects(current_user):
             'fps': int(p.get('fps') or 1),
             'classes': p.get('classes') or [],
             'attributes': p.get('attributes') or {},
+            'attributeDescriptions': p.get('attribute_descriptions') or {},
             'createdAt': p.get('created_at').isoformat() if p.get('created_at') else None,
             'updatedAt': p.get('updated_at').isoformat() if p.get('updated_at') else None,
         })
@@ -258,6 +276,7 @@ def get_project(current_user, project_id):
         'fps': int(project.get('fps') or 1),
         'classes': project.get('classes') or [],
         'attributes': project.get('attributes') or {},
+        'attributeDescriptions': project.get('attribute_descriptions') or {},
         'createdAt': project.get('created_at').isoformat() if project.get('created_at') else None,
         'updatedAt': project.get('updated_at').isoformat() if project.get('updated_at') else None,
     })
@@ -328,6 +347,7 @@ def export_project_annotations(current_user, project_id):
             'fps': int(project.get('fps') or 1),
             'classes': project.get('classes') or [],
             'attributes': project.get('attributes') or {},
+            'attribute_descriptions': project.get('attribute_descriptions') or {},
         },
         'user': user_info,
         'annotations': annotations,
@@ -396,6 +416,7 @@ def rename_project(current_user, project_id):
         'fps': int(new_doc.get('fps') or 1),
         'classes': new_doc.get('classes') or [],
         'attributes': new_doc.get('attributes') or {},
+        'attributeDescriptions': new_doc.get('attribute_descriptions') or {},
     })
 
 
@@ -428,6 +449,19 @@ def import_project_annotations(current_user, project_id):
                 opts = [str(x) for x in v if isinstance(x, (str, int, float))]
                 sanitized[k] = opts
         updates['attributes'] = sanitized
+    attr_desc = proj_meta.get('attribute_descriptions')
+    if isinstance(attr_desc, dict):
+        sanitized_desc = {}
+        for attr_name, codes in attr_desc.items():
+            if not isinstance(attr_name, str) or not isinstance(codes, dict):
+                continue
+            next_codes = {}
+            for code, desc in codes.items():
+                if isinstance(code, str) and isinstance(desc, (str, int, float)):
+                    next_codes[code] = str(desc)
+            if next_codes:
+                sanitized_desc[attr_name] = next_codes
+        updates['attribute_descriptions'] = sanitized_desc
     if updates:
         updates['updated_at'] = datetime.datetime.utcnow()
         mongo.db.projects.update_one({'_id': project['_id']}, {'$set': updates})
@@ -485,6 +519,7 @@ def import_full_project(current_user):
     fps = proj_meta.get('fps') or 1
     classes = proj_meta.get('classes') or []
     attributes_in = proj_meta.get('attributes') or {}
+    attribute_descriptions_in = proj_meta.get('attribute_descriptions') or {}
 
     # sanitize
     if not isinstance(selected_videos, list):
@@ -498,6 +533,18 @@ def import_full_project(current_user):
                 opts = [str(x) for x in v if isinstance(x, (str, int, float))]
                 attributes[k] = opts
 
+    attribute_descriptions = {}
+    if isinstance(attribute_descriptions_in, dict):
+        for attr_name, codes in attribute_descriptions_in.items():
+            if not isinstance(attr_name, str) or not isinstance(codes, dict):
+                continue
+            next_codes = {}
+            for code, desc in codes.items():
+                if isinstance(code, str) and isinstance(desc, (str, int, float)):
+                    next_codes[code] = str(desc)
+            if next_codes:
+                attribute_descriptions[attr_name] = next_codes
+
     doc = {
         'user_id': str(current_user['_id']),
         'video_directory': video_directory,
@@ -505,6 +552,7 @@ def import_full_project(current_user):
         'fps': int(fps) if isinstance(fps, (int, float, str)) else 1,
         'classes': classes,
         'attributes': attributes,
+        'attribute_descriptions': attribute_descriptions,
         'created_at': datetime.datetime.utcnow(),
         'updated_at': datetime.datetime.utcnow(),
     }
@@ -551,6 +599,7 @@ def import_full_project(current_user):
         'fps': int(doc['fps']),
         'classes': classes,
         'attributes': attributes,
+        'attributeDescriptions': attribute_descriptions,
         'imported': imported,
     })
 

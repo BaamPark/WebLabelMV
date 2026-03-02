@@ -21,6 +21,7 @@ function App() {
     selectedVideos: [],
     classes: [],
     attributes: {},
+    attributeDescriptions: {},
   });
 
   const [authToken, setAuthToken] = useState(null);

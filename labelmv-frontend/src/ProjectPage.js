@@ -15,6 +15,7 @@ const ProjectPage = () => {
   const [frameRate, setFrameRate] = useState(1);
   const [classesText, setClassesText] = useState("");
   const [attributesText, setAttributesText] = useState("");
+  const [attributesDescText, setAttributesDescText] = useState("");
   const [manualProjectId, setManualProjectId] = useState("");
   
   const [existingProjects, setExistingProjects] = useState([]);
@@ -57,6 +58,7 @@ const ProjectPage = () => {
       fps: proj.fps || 1,
       classes: proj.classes || [],
       attributes: proj.attributes || {},
+      attributeDescriptions: proj.attributeDescriptions || {},
       numVideos: (proj.selectedVideos || []).length
     });
     navigate('/annotation');
@@ -92,6 +94,7 @@ const ProjectPage = () => {
         fps: data.fps,
         classes: data.classes || [],
         attributes: data.attributes || {},
+        attributeDescriptions: data.attributeDescriptions || {},
         numVideos: (data.selectedVideos || []).length
       });
       navigate('/annotation');
@@ -178,35 +181,35 @@ const ProjectPage = () => {
         .map(s => s.trim())
         .filter(Boolean);
 
-      // Parse attributes text. Supported formats:
-      // name: {opt1, opt2} OR name: opt1, opt2
-      const attributes = {};
-      attributesText.split(/\n/).forEach((line) => {
-        const raw = line.trim();
-        if (!raw) return;
-        const colonIdx = raw.indexOf(":");
-        if (colonIdx === -1) return;
-        const name = raw.slice(0, colonIdx).trim();
-        if (!name) return;
-        let rest = raw.slice(colonIdx + 1).trim();
-        if (rest.startsWith("{") && rest.endsWith("}")) {
-          rest = rest.slice(1, -1).trim();
+      let attributes = {};
+      if (attributesText.trim()) {
+        try {
+          const parsed = JSON.parse(attributesText);
+          attributes = parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (e) {
+          alert('Attributes must be valid JSON.');
+          return;
         }
-        const options = rest
-          .split(/,/)
-          .map(s => s.trim())
-          .filter(Boolean);
-        if (options.length) {
-          attributes[name] = options;
+      }
+
+      let attributeDescriptions = {};
+      if (attributesDescText.trim()) {
+        try {
+          const parsed = JSON.parse(attributesDescText);
+          attributeDescriptions = parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (e) {
+          alert('Attributes Description must be valid JSON.');
+          return;
         }
-      });
+      }
 
       const payload = {
         videoDirectory,
         selectedVideos,
         fps: frameRate,
         classes,
-        attributes
+        attributes,
+        attributeDescriptions
       };
       const trimmedProjectId = manualProjectId.trim();
       if (trimmedProjectId) {
@@ -233,6 +236,7 @@ const ProjectPage = () => {
         fps: data.fps,
         classes: data.classes || classes || [],
         attributes: data.attributes || attributes || {},
+        attributeDescriptions: data.attributeDescriptions || attributeDescriptions || {},
         numVideos: selectedVideos.length
       });
       navigate('/annotation');
@@ -394,12 +398,27 @@ const ProjectPage = () => {
       {selectedVideos.length > 0 && selectedVideos.every(video => video !== null && video !== '') && (
         <section>
           <h2>Attributes</h2>
-          <p>One per line: name: {`{`}option1, option2{`}`}. Applies to each box.</p>
+          <p>Provide JSON mapping attribute name → class codes.</p>
           <textarea
             rows={4}
             value={attributesText}
             onChange={(e) => setAttributesText(e.target.value)}
-            placeholder={"mask: {mask absent, mask complete}\ngown: {gown absent, gown complete}"}
+            placeholder={'{\n  "gown": ["NA", "GC"],\n  "mask": ["NA", "NC"]\n}'}
+            style={{ width: '100%' }}
+          />
+        </section>
+      )}
+
+      {/* Step 7: Attribute Descriptions (optional) */}
+      {selectedVideos.length > 0 && selectedVideos.every(video => video !== null && video !== '') && (
+        <section>
+          <h2>Attributes Description (optional)</h2>
+          <p>Provide JSON mapping attribute name → class code → description.</p>
+          <textarea
+            rows={6}
+            value={attributesDescText}
+            onChange={(e) => setAttributesDescText(e.target.value)}
+            placeholder={'{\n  "gown": {\n    "NA": "The gown is not visible",\n    "GC": "The gown is completely worn."\n  }\n}'}
             style={{ width: '100%' }}
           />
         </section>

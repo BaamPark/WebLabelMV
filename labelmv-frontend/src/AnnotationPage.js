@@ -625,7 +625,7 @@ const AnnotationPage = () => {
           <div className="tool-divider">
             <h3>Automation</h3>
             <button className="btn btn-secondary" type="button" onClick={handleDetectObject}>Detect object</button>
-            <button className="btn btn-secondary" type="button">Auto Track</button>
+            <button className="btn btn-secondary" type="button" disabled>Classify attributes</button>
           </div>
         </aside>
 
