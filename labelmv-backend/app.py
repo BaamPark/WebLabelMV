@@ -1,6 +1,4 @@
 
-
-
 from flask import Flask, request, jsonify, Response
 from flask import send_file
 from flask_cors import CORS
@@ -16,6 +14,8 @@ import cv2
 import math
 import io
 
+from chatbot_service import ChatbotProxyService, load_chatbot_config, ChatbotServiceError
+
 app = Flask(__name__)
 CORS(app)
 
@@ -25,6 +25,12 @@ mongo = PyMongo(app)
 
 # Secret key for JWT via env var
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'changeme-in-prod')
+chatbot_config = load_chatbot_config()
+app.config['MAX_CONTENT_LENGTH'] = max(
+    chatbot_config.max_image_bytes + 1024 * 1024,
+    int(os.environ.get('MAX_CONTENT_LENGTH', chatbot_config.max_image_bytes + 1024 * 1024))
+)
+chatbot_service = ChatbotProxyService(chatbot_config)
 
 # In-memory storage for annotations (for simplicity, will be replaced with database)
 annotations_storage = {}
@@ -149,6 +155,40 @@ def get_annotations(current_user, video_id):
     annotations = annotations_storage.get((user_id, video_id), [])
 
     return jsonify(annotations)
+
+
+@app.route('/api/chatbot', methods=['POST'])
+@token_required
+def chatbot(current_user):
+    if request.content_type and request.content_type.startswith('application/json'):
+        data = request.get_json(silent=True) or {}
+        text = (data.get('text') or '').strip()
+        image_bytes = None
+        image_mime_type = None
+        image_name = None
+    else:
+        text = (request.form.get('text') or '').strip()
+        image = request.files.get('image')
+        image_bytes = image.read() if image else None
+        image_mime_type = image.mimetype if image else None
+        image_name = image.filename if image else None
+
+    try:
+        reply = chatbot_service.generate_reply(
+            text=text,
+            image_bytes=image_bytes,
+            mime_type=image_mime_type,
+            filename=image_name,
+        )
+    except ChatbotServiceError as error:
+        return jsonify({"error": error.message}), error.status_code
+
+    return jsonify({
+        "reply": reply,
+        "model": chatbot_config.model_id,
+        "provider": chatbot_config.provider,
+        "baseUrl": chatbot_config.base_url,
+    })
 
 # -------- Project + Frame APIs --------
 

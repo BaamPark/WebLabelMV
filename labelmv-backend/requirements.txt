@@ -6,3 +6,4 @@ pymongo[srv]==4.8.0
 opencv-python-headless==4.10.0.84
 numpy==2.1.1
 gunicorn==22.0.0
+requests==2.32.5

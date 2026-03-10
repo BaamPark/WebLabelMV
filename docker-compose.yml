@@ -15,8 +15,18 @@ services:
     environment:
       - MONGO_URI=mongodb://mongo:27017/labelmv
       - SECRET_KEY=${SECRET_KEY:-changeme-in-prod}
+      - CHATBOT_PROVIDER=${CHATBOT_PROVIDER:-hf_server}
+      - CHATBOT_BASE_URL=${CHATBOT_BASE_URL:-http://host.docker.internal:8000}
+      - CHATBOT_REQUEST_PATH=${CHATBOT_REQUEST_PATH:-/generate}
+      - CHATBOT_API_KEY=${CHATBOT_API_KEY:-}
+      - CHATBOT_MODEL=${CHATBOT_MODEL:-Qwen/Qwen3-VL-2B-Instruct}
+      - CHATBOT_TIMEOUT_SECONDS=${CHATBOT_TIMEOUT_SECONDS:-180}
+      - CHATBOT_MAX_TOKENS=${CHATBOT_MAX_TOKENS:-256}
+      - CHATBOT_MAX_IMAGE_BYTES=${CHATBOT_MAX_IMAGE_BYTES:-5242880}
     depends_on:
       - mongo
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # Mount videos from host to container; point your project to /app/videos
       - ./videos:/app/videos:ro

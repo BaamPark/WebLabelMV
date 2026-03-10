@@ -10,6 +10,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  position: relative;
 }
 
 .header {
@@ -259,4 +260,31 @@ body {
 @media (min-width: 1200px) {
   .sidebar-left { width: 180px; }
   .sidebar-right { width: 340px; }
+}
+
+.ask-ai-button {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 45;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #0f172a, #1d4ed8);
+  color: #ffffff;
+  padding: 14px 20px;
+  font-size: 15px;
+  font-weight: 700;
+  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.28);
+  cursor: pointer;
+}
+
+.ask-ai-button-open {
+  background: linear-gradient(135deg, #334155, #0f172a);
+}
+
+@media (max-width: 700px) {
+  .ask-ai-button {
+    right: 12px;
+    bottom: 12px;
+  }
 }

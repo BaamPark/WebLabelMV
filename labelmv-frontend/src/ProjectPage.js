@@ -3,7 +3,7 @@
 
 import "./ProjectPage.css";
 import React, { useState, useContext, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { ProjectContext, AuthContext } from './App';
 
 const ProjectPage = () => {

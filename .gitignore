@@ -2,3 +2,5 @@
 .downloads/
 .vscode/
 videos/
+.venv/
+*.pyc

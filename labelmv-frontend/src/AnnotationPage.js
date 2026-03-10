@@ -1,6 +1,7 @@
 import React, { useState, useRef, useContext, useEffect } from 'react';
 import './AnnotationPage.css';
 import { ProjectContext, AuthContext } from './App';
+import ChatbotPanel from './ChatbotPanel';
 
 
 const AnnotationPage = () => {
@@ -20,6 +21,7 @@ const AnnotationPage = () => {
   const [viewportSize, setViewportSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [pendingIndex, setPendingIndex] = useState(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   const { projectData, setProjectData } = useContext(ProjectContext);
   const { authToken } = useContext(AuthContext);
@@ -741,6 +743,16 @@ const AnnotationPage = () => {
           </ul>
         </aside>
       </div>
+      {isChatOpen && (
+        <ChatbotPanel authToken={authToken} onClose={() => setIsChatOpen(false)} />
+      )}
+      <button
+        type="button"
+        className={`ask-ai-button ${isChatOpen ? 'ask-ai-button-open' : ''}`}
+        onClick={() => setIsChatOpen((current) => !current)}
+      >
+        {isChatOpen ? 'Hide AI' : 'Ask AI'}
+      </button>
     </div>
   );
 };
