@@ -44,6 +44,47 @@ def _coerce_project_id(project_id):
         return project_id
     return None
 
+
+def _sanitize_attributes(raw_attributes):
+    attributes = {}
+    if not isinstance(raw_attributes, dict):
+        return attributes
+
+    for key, value in raw_attributes.items():
+        if not isinstance(key, str) or not isinstance(value, list):
+            continue
+        options = [str(item) for item in value if isinstance(item, (str, int, float))]
+        if options:
+            attributes[key] = options
+    return attributes
+
+
+def _sanitize_attribute_descriptions(raw_descriptions, attributes):
+    descriptions = {}
+    if not isinstance(raw_descriptions, dict):
+        return descriptions
+
+    for attr_name, code_map in raw_descriptions.items():
+        if not isinstance(attr_name, str) or not isinstance(code_map, dict):
+            continue
+        valid_codes = set(attributes.get(attr_name) or [])
+        if not valid_codes:
+            continue
+
+        normalized = {}
+        for code, description in code_map.items():
+            if not isinstance(code, str) or code not in valid_codes:
+                continue
+            if not isinstance(description, str):
+                continue
+            text = description.strip()
+            if text:
+                normalized[code] = text
+
+        if normalized:
+            descriptions[attr_name] = normalized
+    return descriptions
+
 @app.route('/videos', methods=['GET'])
 def get_videos():
     directory = request.args.get('directory') or '/app/videos'
@@ -202,22 +243,15 @@ def create_or_update_project(current_user):
     classes = data.get('classes') or []
     # optional project-level attributes: { name: [option1, option2, ...], ... }
     raw_attributes = data.get('attributes') or {}
+    raw_attribute_descriptions = data.get('attributeDescriptions') or {}
     project_id = data.get('projectId')  # optional for update/create
 
     if not video_directory or not isinstance(selected_videos, list) or not fps:
         return jsonify({"error": "videoDirectory, selected_videos and fps are required"}), 400
     if not isinstance(classes, list):
         return jsonify({"error": "classes must be a list"}), 400
-    # validate attributes shape if provided
-    attributes = {}
-    if isinstance(raw_attributes, dict):
-        for k, v in raw_attributes.items():
-            if not isinstance(k, str):
-                continue
-            if isinstance(v, list):
-                opts = [str(x) for x in v if isinstance(x, (str, int, float))]
-                if opts:
-                    attributes[k] = opts
+    attributes = _sanitize_attributes(raw_attributes)
+    attribute_descriptions = _sanitize_attribute_descriptions(raw_attribute_descriptions, attributes)
 
     doc = {
         'user_id': str(current_user['_id']),
@@ -226,6 +260,7 @@ def create_or_update_project(current_user):
         'fps': int(fps),
         'classes': classes,
         'attributes': attributes,
+        'attribute_descriptions': attribute_descriptions,
         'updated_at': datetime.datetime.utcnow(),
     }
 
@@ -258,7 +293,8 @@ def create_or_update_project(current_user):
         'selectedVideos': selected_videos,
         'fps': int(fps),
         'classes': classes,
-        'attributes': attributes
+        'attributes': attributes,
+        'attributeDescriptions': attribute_descriptions,
     })
 
 @app.route('/api/projects', methods=['GET'])
@@ -276,6 +312,7 @@ def list_projects(current_user):
             'fps': int(p.get('fps') or 1),
             'classes': p.get('classes') or [],
             'attributes': p.get('attributes') or {},
+            'attributeDescriptions': p.get('attribute_descriptions') or {},
             'createdAt': p.get('created_at').isoformat() if p.get('created_at') else None,
             'updatedAt': p.get('updated_at').isoformat() if p.get('updated_at') else None,
         })
@@ -298,6 +335,7 @@ def get_project(current_user, project_id):
         'fps': int(project.get('fps') or 1),
         'classes': project.get('classes') or [],
         'attributes': project.get('attributes') or {},
+        'attributeDescriptions': project.get('attribute_descriptions') or {},
         'createdAt': project.get('created_at').isoformat() if project.get('created_at') else None,
         'updatedAt': project.get('updated_at').isoformat() if project.get('updated_at') else None,
     })
@@ -368,6 +406,7 @@ def export_project_annotations(current_user, project_id):
             'fps': int(project.get('fps') or 1),
             'classes': project.get('classes') or [],
             'attributes': project.get('attributes') or {},
+            'attributeDescriptions': project.get('attribute_descriptions') or {},
         },
         'user': user_info,
         'annotations': annotations,
@@ -436,6 +475,7 @@ def rename_project(current_user, project_id):
         'fps': int(new_doc.get('fps') or 1),
         'classes': new_doc.get('classes') or [],
         'attributes': new_doc.get('attributes') or {},
+        'attributeDescriptions': new_doc.get('attribute_descriptions') or {},
     })
 
 
@@ -455,19 +495,20 @@ def import_project_annotations(current_user, project_id):
     proj_meta = data.get('project') or {}
     annos = data.get('annotations') or []
 
-    # Optionally update classes/attributes if present
+    # Optionally update classes/attributes/attribute descriptions if present
     updates = {}
     if isinstance(proj_meta.get('classes'), list):
         updates['classes'] = proj_meta['classes']
-    attrs = proj_meta.get('attributes')
-    if isinstance(attrs, dict):
-        # ensure list of strings
-        sanitized = {}
-        for k, v in attrs.items():
-            if isinstance(k, str) and isinstance(v, list):
-                opts = [str(x) for x in v if isinstance(x, (str, int, float))]
-                sanitized[k] = opts
-        updates['attributes'] = sanitized
+    attrs = _sanitize_attributes(proj_meta.get('attributes') or {})
+    if attrs:
+        updates['attributes'] = attrs
+    raw_descriptions = proj_meta.get('attributeDescriptions')
+    if raw_descriptions is None:
+        raw_descriptions = proj_meta.get('attribute_descriptions')
+    descriptions_source = attrs if attrs else (project.get('attributes') or {})
+    descriptions = _sanitize_attribute_descriptions(raw_descriptions or {}, descriptions_source)
+    if descriptions:
+        updates['attribute_descriptions'] = descriptions
     if updates:
         updates['updated_at'] = datetime.datetime.utcnow()
         mongo.db.projects.update_one({'_id': project['_id']}, {'$set': updates})
@@ -525,18 +566,17 @@ def import_full_project(current_user):
     fps = proj_meta.get('fps') or 1
     classes = proj_meta.get('classes') or []
     attributes_in = proj_meta.get('attributes') or {}
+    attribute_descriptions_in = proj_meta.get('attributeDescriptions')
+    if attribute_descriptions_in is None:
+        attribute_descriptions_in = proj_meta.get('attribute_descriptions')
 
     # sanitize
     if not isinstance(selected_videos, list):
         selected_videos = []
     if not isinstance(classes, list):
         classes = []
-    attributes = {}
-    if isinstance(attributes_in, dict):
-        for k, v in attributes_in.items():
-            if isinstance(k, str) and isinstance(v, list):
-                opts = [str(x) for x in v if isinstance(x, (str, int, float))]
-                attributes[k] = opts
+    attributes = _sanitize_attributes(attributes_in)
+    attribute_descriptions = _sanitize_attribute_descriptions(attribute_descriptions_in or {}, attributes)
 
     doc = {
         'user_id': str(current_user['_id']),
@@ -545,6 +585,7 @@ def import_full_project(current_user):
         'fps': int(fps) if isinstance(fps, (int, float, str)) else 1,
         'classes': classes,
         'attributes': attributes,
+        'attribute_descriptions': attribute_descriptions,
         'created_at': datetime.datetime.utcnow(),
         'updated_at': datetime.datetime.utcnow(),
     }
@@ -591,6 +632,7 @@ def import_full_project(current_user):
         'fps': int(doc['fps']),
         'classes': classes,
         'attributes': attributes,
+        'attributeDescriptions': attribute_descriptions,
         'imported': imported,
     })
 

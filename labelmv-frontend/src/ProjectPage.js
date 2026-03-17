@@ -15,6 +15,7 @@ const ProjectPage = () => {
   const [frameRate, setFrameRate] = useState(1);
   const [classesText, setClassesText] = useState("");
   const [attributesText, setAttributesText] = useState("");
+  const [attributesDescText, setAttributesDescText] = useState("");
   const [manualProjectId, setManualProjectId] = useState("");
   
   const [existingProjects, setExistingProjects] = useState([]);
@@ -57,6 +58,7 @@ const ProjectPage = () => {
       fps: proj.fps || 1,
       classes: proj.classes || [],
       attributes: proj.attributes || {},
+      attributeDescriptions: proj.attributeDescriptions || {},
       numVideos: (proj.selectedVideos || []).length
     });
     navigate('/annotation');
@@ -92,6 +94,7 @@ const ProjectPage = () => {
         fps: data.fps,
         classes: data.classes || [],
         attributes: data.attributes || {},
+        attributeDescriptions: data.attributeDescriptions || {},
         numVideos: (data.selectedVideos || []).length
       });
       navigate('/annotation');
@@ -201,12 +204,28 @@ const ProjectPage = () => {
         }
       });
 
+      let attributeDescriptions = {};
+      const rawDescriptions = attributesDescText.trim();
+      if (rawDescriptions) {
+        let parsed;
+        try {
+          parsed = JSON.parse(rawDescriptions);
+        } catch (error) {
+          throw new Error('Attribute descriptions must be valid JSON.');
+        }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('Attribute descriptions must be a JSON object.');
+        }
+        attributeDescriptions = parsed;
+      }
+
       const payload = {
         videoDirectory,
         selectedVideos,
         fps: frameRate,
         classes,
-        attributes
+        attributes,
+        attributeDescriptions,
       };
       const trimmedProjectId = manualProjectId.trim();
       if (trimmedProjectId) {
@@ -233,6 +252,7 @@ const ProjectPage = () => {
         fps: data.fps,
         classes: data.classes || classes || [],
         attributes: data.attributes || attributes || {},
+        attributeDescriptions: data.attributeDescriptions || attributeDescriptions || {},
         numVideos: selectedVideos.length
       });
       navigate('/annotation');
@@ -400,6 +420,21 @@ const ProjectPage = () => {
             value={attributesText}
             onChange={(e) => setAttributesText(e.target.value)}
             placeholder={"mask: {mask absent, mask complete}\ngown: {gown absent, gown complete}"}
+            style={{ width: '100%' }}
+          />
+        </section>
+      )}
+
+      {/* Step 7: Attribute Descriptions (optional) */}
+      {selectedVideos.length > 0 && selectedVideos.every(video => video !== null && video !== '') && (
+        <section>
+          <h2>Attributes Description (optional)</h2>
+          <p>Provide JSON mapping attribute name to class code to description.</p>
+          <textarea
+            rows={6}
+            value={attributesDescText}
+            onChange={(e) => setAttributesDescText(e.target.value)}
+            placeholder={'{\n  "gown": {\n    "NA": "The gown is not visible",\n    "GC": "The gown is completely worn."\n  }\n}'}
             style={{ width: '100%' }}
           />
         </section>
