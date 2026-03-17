@@ -1,58 +1,92 @@
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import './ChatbotPanel.css';
 
-const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-  reader.onerror = () => reject(new Error('Failed to preview the selected image.'));
-  reader.readAsDataURL(file);
-});
+const clampIndex = (value, maxIndex) => Math.max(0, Math.min(maxIndex, value));
+const shortenLabel = (text, maxLength = 28) => {
+  if (!text) return '';
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+};
 
-const ChatbotPanel = ({ authToken, onClose }) => {
+const ChatbotPanel = ({
+  authToken,
+  onClose,
+  currentVideoIndex = 0,
+  currentSampleIndex = 0,
+  sampledCount = 0,
+  selectedVideos = [],
+  currentBoxes = [],
+  selectedBoxId = null,
+}) => {
   const [prompt, setPrompt] = useState('');
-  const [imageFile, setImageFile] = useState(null);
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const imageInputRef = useRef(null);
+  const [targetScope, setTargetScope] = useState('none');
+  const [targetBoxId, setTargetBoxId] = useState('none');
+
+  const videoOptions = selectedVideos.length
+    ? selectedVideos
+    : Array.from({ length: currentVideoIndex + 1 }, (_, index) => `Video ${index + 1}`);
+  const viewLabels = videoOptions.map((videoName, index) => `View ${index + 1}: ${shortenLabel(videoName || `Video ${index + 1}`)}`);
+  const maxSampleIndex = Math.max(0, sampledCount - 1);
+  const sourceVideoLabel = viewLabels[currentVideoIndex] || `View ${currentVideoIndex + 1}`;
+  const targetBoxOptions = [
+    { value: 'none', label: 'None' },
+    { value: 'all', label: 'All' },
+    ...currentBoxes.map((box, index) => ({
+      value: String(box.id),
+      label: `Box ${index + 1}${box.className ? ` • ${box.className}` : ''}${box.objectId != null && box.objectId !== 0 ? ` • ID ${box.objectId}` : ''}`,
+    })),
+  ];
+  const targetOptions = [
+    { value: 'none', label: 'None' },
+    { value: 'previous_current_view', label: 'Previous Frame (Current View)' },
+    { value: 'next_current_view', label: 'Next Frame (Current View)' },
+    ...videoOptions
+      .map((videoName, index) => ({ videoName, index }))
+      .filter(({ index }) => index !== currentVideoIndex)
+      .map(({ videoName, index }) => ({
+        value: `view_${index}`,
+        label: `${viewLabels[index] || `View ${index + 1}`} (Current Frame)`,
+      })),
+  ];
+
+  let targetVideoIndex = currentVideoIndex;
+  let targetSampleIndex = currentSampleIndex;
+  let targetSummary = 'No extra target context';
+
+  if (targetScope === 'previous_current_view') {
+    targetSampleIndex = clampIndex(currentSampleIndex - 1, maxSampleIndex);
+    targetSummary = `Target ${sourceVideoLabel} frame ${targetSampleIndex}`;
+  } else if (targetScope === 'next_current_view') {
+    targetSampleIndex = clampIndex(currentSampleIndex + 1, maxSampleIndex);
+    targetSummary = `Target ${sourceVideoLabel} frame ${targetSampleIndex}`;
+  } else if (targetScope.startsWith('view_')) {
+    const parsedIndex = parseInt(targetScope.slice(5), 10);
+    if (Number.isFinite(parsedIndex)) {
+      targetVideoIndex = parsedIndex;
+    }
+    const targetVideoLabel = viewLabels[targetVideoIndex] || `View ${targetVideoIndex + 1}`;
+    targetSummary = `Target ${targetVideoLabel} frame ${targetSampleIndex}`;
+  }
+  let targetBoxSummary = 'No box context';
+  if (targetBoxId === 'all') {
+    targetBoxSummary = 'All current-frame annotations';
+  } else if (targetBoxId !== 'none') {
+    targetBoxSummary = `Target box ${targetBoxId}`;
+  }
 
   const resetComposer = () => {
     setPrompt('');
-    setImageFile(null);
-    if (imageInputRef.current) {
-      imageInputRef.current.value = '';
-    }
-  };
-
-  const clearImage = () => {
-    setImageFile(null);
-    if (imageInputRef.current) {
-      imageInputRef.current.value = '';
-    }
-  };
-
-  const handleImageChange = (event) => {
-    const nextFile = event.target.files && event.target.files[0];
-    setImageFile(nextFile || null);
   };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
 
     const trimmedPrompt = prompt.trim();
-    if (!trimmedPrompt && !imageFile) {
-      setError('Enter a message or attach one image.');
+    if (!trimmedPrompt) {
+      setError('Enter a message.');
       return;
-    }
-
-    let uploadedImagePreviewUrl = '';
-    if (imageFile) {
-      try {
-        uploadedImagePreviewUrl = await readFileAsDataUrl(imageFile);
-      } catch (previewError) {
-        setError(previewError.message);
-        return;
-      }
     }
 
     setMessages((current) => [
@@ -61,8 +95,7 @@ const ChatbotPanel = ({ authToken, onClose }) => {
         id: Date.now(),
         role: 'user',
         text: trimmedPrompt,
-        imagePreviewUrl: uploadedImagePreviewUrl,
-        imageName: imageFile ? imageFile.name : '',
+        meta: `Source ${sourceVideoLabel} • frame ${currentSampleIndex} • ${targetSummary} • ${targetBoxSummary}${selectedBoxId != null ? ` • Selected Box ${selectedBoxId}` : ''}`,
       }
     ]);
     setIsLoading(true);
@@ -70,8 +103,16 @@ const ChatbotPanel = ({ authToken, onClose }) => {
 
     const formData = new FormData();
     formData.append('text', trimmedPrompt);
-    if (imageFile) {
-      formData.append('image', imageFile);
+    formData.append('source_video_index', String(currentVideoIndex));
+    formData.append('source_sample_index', String(currentSampleIndex));
+    formData.append('target_scope', targetScope);
+    if (targetScope !== 'none') {
+      formData.append('target_video_index', String(targetVideoIndex));
+      formData.append('target_sample_index', String(targetSampleIndex));
+    }
+    formData.append('target_box_id', targetBoxId);
+    if (selectedBoxId != null) {
+      formData.append('selected_box_id', String(selectedBoxId));
     }
 
     try {
@@ -110,7 +151,7 @@ const ChatbotPanel = ({ authToken, onClose }) => {
       <div className="chatbot-panel-header">
         <div>
           <h3>Ask AI</h3>
-          <p>Ask about the current annotation task or attach one image.</p>
+          <p>Ask about the current annotation task and choose one target frame.</p>
         </div>
         <button type="button" className="chatbot-close-button" onClick={onClose}>Close</button>
       </div>
@@ -126,13 +167,6 @@ const ChatbotPanel = ({ authToken, onClose }) => {
           <div key={message.id} className={`chatbot-message chatbot-message-${message.role}`}>
             <div className="chatbot-message-role">{message.role === 'user' ? 'You' : 'Assistant'}</div>
             {message.text && <div className="chatbot-message-text">{message.text}</div>}
-            {message.imagePreviewUrl && (
-              <img
-                alt={message.imageName || 'Uploaded preview'}
-                className="chatbot-preview"
-                src={message.imagePreviewUrl}
-              />
-            )}
             {message.meta && <div className="chatbot-message-meta">{message.meta}</div>}
           </div>
         ))}
@@ -146,6 +180,42 @@ const ChatbotPanel = ({ authToken, onClose }) => {
       </div>
 
       <form className="chatbot-panel-composer" onSubmit={handleSubmit}>
+        <label className="chatbot-label" htmlFor="annotation-chatbot-target-scope">Target Frame</label>
+        <select
+          id="annotation-chatbot-target-scope"
+          value={targetScope}
+          onChange={(event) => setTargetScope(event.target.value)}
+        >
+          {targetOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <div className="chatbot-message-meta">
+          Source {sourceVideoLabel} frame {currentSampleIndex} {targetScope === 'none' ? '-> no extra target' : `-> ${targetSummary}`}
+        </div>
+
+        <label className="chatbot-label" htmlFor="annotation-chatbot-target-box">Target Box</label>
+        <select
+          id="annotation-chatbot-target-box"
+          value={targetBoxId}
+          onChange={(event) => setTargetBoxId(event.target.value)}
+        >
+          {targetBoxOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <div className="chatbot-message-meta">
+          {targetBoxId === 'none'
+            ? 'No specific box will be added as target context.'
+            : targetBoxId === 'all'
+              ? 'All current-frame annotations will stay in context.'
+              : `Current-frame box ${targetBoxId} is the target box.`}
+        </div>
+
         <label className="chatbot-label" htmlFor="annotation-chatbot-prompt">Prompt</label>
         <textarea
           id="annotation-chatbot-prompt"
@@ -154,22 +224,6 @@ const ChatbotPanel = ({ authToken, onClose }) => {
           onChange={(event) => setPrompt(event.target.value)}
           placeholder="Ask a question about the frame or annotation."
         />
-
-        <label className="chatbot-label" htmlFor="annotation-chatbot-image">Image</label>
-        <input
-          id="annotation-chatbot-image"
-          ref={imageInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleImageChange}
-        />
-
-        {imageFile && (
-          <div className="chatbot-file-row">
-            <span>{imageFile.name}</span>
-            <button type="button" onClick={clearImage}>Remove</button>
-          </div>
-        )}
 
         {error && <div className="chatbot-error">{error}</div>}
 

@@ -744,7 +744,16 @@ const AnnotationPage = () => {
         </aside>
       </div>
       {isChatOpen && (
-        <ChatbotPanel authToken={authToken} onClose={() => setIsChatOpen(false)} />
+        <ChatbotPanel
+          authToken={authToken}
+          onClose={() => setIsChatOpen(false)}
+          currentVideoIndex={selectedVideoIndex}
+          currentSampleIndex={sampleIndex}
+          sampledCount={sampledCount}
+          selectedVideos={projectSelectedVideos}
+          currentBoxes={boundingBoxes}
+          selectedBoxId={selectedBoxId}
+        />
       )}
       <button
         type="button"

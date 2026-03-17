@@ -110,9 +110,16 @@
 }
 
 .chatbot-panel-composer textarea,
-.chatbot-panel-composer input[type="file"] {
+.chatbot-panel-composer select {
   width: 100%;
   margin-bottom: 12px;
+  box-sizing: border-box;
+}
+
+.chatbot-panel-composer textarea {
+  width: 100%;
+  margin-bottom: 12px;
+  box-sizing: border-box;
 }
 
 .chatbot-file-row {
