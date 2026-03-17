@@ -139,6 +139,24 @@ def _read_frame_bytes(project, video_index, sample_index):
 
     return buf.tobytes(), info
 
+
+def _describe_image_relationship(target_scope, source_video_index, target_video_index, project):
+    if target_scope == 'previous_current_view':
+        return 'the previous frame from the current view'
+    if target_scope == 'next_current_view':
+        return 'the next frame from the current view'
+    if isinstance(target_scope, str) and target_scope.startswith('view_'):
+        selected_videos = project.get('selected_videos') or []
+        target_name = (
+            selected_videos[target_video_index]
+            if isinstance(target_video_index, int) and 0 <= target_video_index < len(selected_videos)
+            else None
+        )
+        if target_name:
+            return f'the current frame from another view ({target_name})'
+        return 'the current frame from another view'
+    return None
+
 @app.route('/videos', methods=['GET'])
 def get_videos():
     directory = request.args.get('directory') or '/app/videos'
@@ -346,7 +364,7 @@ def chatbot(current_user):
             boxes_for_current_frame = serialize_boxes_for_prompt(source_boxes)
         elif target_box_id not in (None, '', 'none'):
             target_box = selected_boxes[0] if selected_boxes else None
-        has_additional_frame = False
+        image_relationship_text = None
 
         if target_scope != 'none':
             try:
@@ -361,6 +379,12 @@ def chatbot(current_user):
                 return jsonify({"error": error.message}), error.status_code
 
             has_additional_frame = True
+            image_relationship_text = _describe_image_relationship(
+                target_scope,
+                source_video_index,
+                target_video_index,
+                project,
+            )
             contextual_images.append({
                 'bytes': target_frame_bytes,
                 'mime_type': 'image/jpeg',
@@ -370,7 +394,7 @@ def chatbot(current_user):
         contextual_text = build_contextual_chat_prompt(
             text,
             project,
-            has_additional_frame=has_additional_frame,
+            image_relationship_text=image_relationship_text,
             boxes_for_current_frame=boxes_for_current_frame,
             target_box=target_box,
             chat_history=normalized_chat_history,

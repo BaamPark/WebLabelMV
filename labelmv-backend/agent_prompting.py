@@ -42,7 +42,7 @@ def serialize_boxes_for_prompt(boxes):
     return items
 
 
-def build_contextual_chat_prompt(user_text, project, has_additional_frame=False,
+def build_contextual_chat_prompt(user_text, project, image_relationship_text=None,
                                  boxes_for_current_frame=None, target_box=None, chat_history=None):
     payload = {
         'task': 'Answer the user question using the provided annotation context. Do not propose or execute actions unless the user explicitly asks for analysis of possible edits.',
@@ -59,8 +59,11 @@ def build_contextual_chat_prompt(user_text, project, has_additional_frame=False,
         payload['chat_history'] = chat_history
 
     image_order = "Image order:\n- Image 1: current frame\n"
-    if has_additional_frame:
-        image_order += "- Image 2 (if present): target frame\n"
+    if image_relationship_text:
+        image_order += f"- Image 2: {image_relationship_text}\n"
+        image_order += "- Target frame: Image 2\n"
+    else:
+        image_order += "- Target frame: Image 1\n"
 
     instructions = (
         "You are assisting a multi-view annotation workflow. "

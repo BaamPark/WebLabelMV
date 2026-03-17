@@ -33,9 +33,9 @@ class ChatbotConfig:
 
 def load_chatbot_config():
     return ChatbotConfig(
-        provider=os.environ.get("CHATBOT_PROVIDER", "hf_server").strip().lower() or "hf_server",
-        base_url=os.environ.get("CHATBOT_BASE_URL", "http://hf-model-server:8000").strip(),
-        request_path=os.environ.get("CHATBOT_REQUEST_PATH", "/generate").strip() or "/generate",
+        provider=os.environ.get("CHATBOT_PROVIDER", "ollama").strip().lower() or "ollama",
+        base_url=os.environ.get("CHATBOT_BASE_URL", "http://host.docker.internal:11434").strip(),
+        request_path=os.environ.get("CHATBOT_REQUEST_PATH", "/api/generate").strip() or "/api/generate",
         api_key=os.environ.get("CHATBOT_API_KEY", "").strip(),
         model_id=os.environ.get("CHATBOT_MODEL", DEFAULT_MODEL_ID).strip() or DEFAULT_MODEL_ID,
         timeout_seconds=max(10, _read_int_env("CHATBOT_TIMEOUT_SECONDS", 180)),
@@ -108,40 +108,24 @@ class ChatbotProxyService:
         return headers
 
     def _build_request(self, prompt_text, images):
-        if self.config.provider == "ollama":
-            payload = {
-                "model": self.config.model_id,
-                "prompt": prompt_text,
-                "stream": False,
-                "options": {
-                    "num_predict": self.config.max_tokens,
-                    "temperature": 0.2,
-                },
-            }
-            if images:
-                payload["images"] = [
-                    base64.b64encode(item["bytes"]).decode("utf-8")
-                    for item in images
-                ]
-            return payload
-
         payload = {
             "model": self.config.model_id,
-            "text": prompt_text,
-            "max_new_tokens": self.config.max_tokens,
-            "temperature": 0.2,
+            "prompt": prompt_text,
+            "stream": False,
+            "options": {
+                "num_predict": self.config.max_tokens,
+                "temperature": 0.2,
+            },
         }
         if images:
-            image = images[0]
-            payload["image_base64"] = base64.b64encode(image["bytes"]).decode("utf-8")
-            payload["image_mime_type"] = image["mime_type"]
-            payload["image_name"] = image["filename"]
+            payload["images"] = [
+                base64.b64encode(item["bytes"]).decode("utf-8")
+                for item in images
+            ]
         return payload
 
     def _extract_reply(self, data):
-        if self.config.provider == "ollama":
-            return (data.get("response") or "").strip()
-        return (data.get("reply") or "").strip()
+        return (data.get("response") or "").strip()
 
     def generate_reply(self, text, image_bytes=None, mime_type=None, filename=None, images=None):
         prompt_text = self.validate_text(text)
