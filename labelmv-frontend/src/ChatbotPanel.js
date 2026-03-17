@@ -10,6 +10,7 @@ const shortenLabel = (text, maxLength = 28) => {
 const ChatbotPanel = ({
   authToken,
   onClose,
+  isOpen = false,
   projectId = '',
   currentVideoIndex = 0,
   currentSampleIndex = 0,
@@ -70,15 +71,24 @@ const ChatbotPanel = ({
     const targetVideoLabel = viewLabels[targetVideoIndex] || `View ${targetVideoIndex + 1}`;
     targetSummary = `Target ${targetVideoLabel} frame ${targetSampleIndex}`;
   }
-  let targetBoxSummary = 'No box context';
+  let targetBoxSummary = 'No selected box from current frame';
   if (targetBoxId === 'all') {
     targetBoxSummary = 'All current-frame annotations';
   } else if (targetBoxId !== 'none') {
-    targetBoxSummary = `Target box ${targetBoxId}`;
+    targetBoxSummary = `Selected box ${targetBoxId} from current frame`;
   }
 
   const resetComposer = () => {
     setPrompt('');
+  };
+
+  const resetSession = () => {
+    setPrompt('');
+    setMessages([]);
+    setIsLoading(false);
+    setError('');
+    setTargetScope('none');
+    setTargetBoxId('none');
   };
 
   const handleSubmit = async (event) => {
@@ -90,13 +100,20 @@ const ChatbotPanel = ({
       return;
     }
 
+    const chatHistory = messages
+      .filter((message) => message && message.text)
+      .map((message) => ({
+        role: message.role,
+        text: message.text,
+      }));
+
     setMessages((current) => [
       ...current,
       {
         id: Date.now(),
         role: 'user',
         text: trimmedPrompt,
-        meta: `Source ${sourceVideoLabel} • frame ${currentSampleIndex} • ${targetSummary} • ${targetBoxSummary}${selectedBoxId != null ? ` • Selected Box ${selectedBoxId}` : ''}`,
+        meta: `Source ${sourceVideoLabel} • frame ${currentSampleIndex} • ${targetSummary} • ${targetBoxSummary}${selectedBoxId != null ? ` • UI Selected Box ${selectedBoxId}` : ''}`,
       }
     ]);
     setIsLoading(true);
@@ -116,6 +133,7 @@ const ChatbotPanel = ({
     }
     formData.append('target_box_id', targetBoxId);
     formData.append('current_boxes', JSON.stringify(currentBoxes || []));
+    formData.append('chat_history', JSON.stringify(chatHistory));
     if (selectedBoxId != null) {
       formData.append('selected_box_id', String(selectedBoxId));
     }
@@ -152,13 +170,16 @@ const ChatbotPanel = ({
   };
 
   return (
-    <section className="chatbot-panel" aria-label="AI assistant">
+    <section className={`chatbot-panel ${isOpen ? '' : 'chatbot-panel-hidden'}`} aria-label="AI assistant">
       <div className="chatbot-panel-header">
         <div>
           <h3>Ask AI</h3>
           <p>Ask about the current annotation task and choose one target frame.</p>
         </div>
-        <button type="button" className="chatbot-close-button" onClick={onClose}>Close</button>
+        <div className="chatbot-panel-header-actions">
+          <button type="button" className="chatbot-renew-button" onClick={resetSession}>Renew</button>
+          <button type="button" className="chatbot-close-button" onClick={onClose}>Close</button>
+        </div>
       </div>
 
       <div className="chatbot-panel-messages">
@@ -201,7 +222,7 @@ const ChatbotPanel = ({
           Source {sourceVideoLabel} frame {currentSampleIndex} {targetScope === 'none' ? '-> no extra target' : `-> ${targetSummary}`}
         </div>
 
-        <label className="chatbot-label" htmlFor="annotation-chatbot-target-box">Target Box</label>
+        <label className="chatbot-label" htmlFor="annotation-chatbot-target-box">Selected Box From Current Frame</label>
         <select
           id="annotation-chatbot-target-box"
           value={targetBoxId}
@@ -215,10 +236,10 @@ const ChatbotPanel = ({
         </select>
         <div className="chatbot-message-meta">
           {targetBoxId === 'none'
-            ? 'No specific box will be added as target context.'
+            ? 'No specific current-frame box will be added.'
             : targetBoxId === 'all'
               ? 'All current-frame annotations will stay in context.'
-              : `Current-frame box ${targetBoxId} is the target box.`}
+              : `Current-frame box ${targetBoxId} will be included as the selected box.`}
         </div>
 
         <label className="chatbot-label" htmlFor="annotation-chatbot-prompt">Prompt</label>

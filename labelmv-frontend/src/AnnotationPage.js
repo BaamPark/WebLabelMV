@@ -743,19 +743,18 @@ const AnnotationPage = () => {
           </ul>
         </aside>
       </div>
-      {isChatOpen && (
-        <ChatbotPanel
-          authToken={authToken}
-          onClose={() => setIsChatOpen(false)}
-          projectId={projectId}
-          currentVideoIndex={selectedVideoIndex}
-          currentSampleIndex={sampleIndex}
-          sampledCount={sampledCount}
-          selectedVideos={projectSelectedVideos}
-          currentBoxes={boundingBoxes}
-          selectedBoxId={selectedBoxId}
-        />
-      )}
+      <ChatbotPanel
+        authToken={authToken}
+        onClose={() => setIsChatOpen(false)}
+        isOpen={isChatOpen}
+        projectId={projectId}
+        currentVideoIndex={selectedVideoIndex}
+        currentSampleIndex={sampleIndex}
+        sampledCount={sampledCount}
+        selectedVideos={projectSelectedVideos}
+        currentBoxes={boundingBoxes}
+        selectedBoxId={selectedBoxId}
+      />
       <button
         type="button"
         className={`ask-ai-button ${isChatOpen ? 'ask-ai-button-open' : ''}`}

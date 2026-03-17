@@ -14,6 +14,12 @@ import cv2
 import math
 import io
 
+from agent_prompting import (
+    build_contextual_chat_prompt,
+    log_agent_input,
+    select_box_subset,
+    serialize_boxes_for_prompt,
+)
 from chatbot_service import ChatbotProxyService, load_chatbot_config, ChatbotServiceError
 
 app = Flask(__name__)
@@ -132,96 +138,6 @@ def _read_frame_bytes(project, video_index, sample_index):
         raise ChatbotServiceError("Failed to encode frame", status_code=500)
 
     return buf.tobytes(), info
-
-
-def _clamp_grounding(value):
-    return max(0, min(1000, int(round(float(value)))))
-
-
-def _box_to_grounding(box):
-    left = float(box.get('left') or 0.0)
-    top = float(box.get('top') or 0.0)
-    width = float(box.get('width') or 0.0)
-    height = float(box.get('height') or 0.0)
-    return {
-        'x1': _clamp_grounding(left * 1000.0),
-        'y1': _clamp_grounding(top * 1000.0),
-        'x2': _clamp_grounding((left + width) * 1000.0),
-        'y2': _clamp_grounding((top + height) * 1000.0),
-    }
-
-
-def _select_box_subset(boxes, target_box_id):
-    if target_box_id == 'all':
-        return boxes
-    if not target_box_id or target_box_id == 'none':
-        return []
-    target_box_id = str(target_box_id)
-    return [box for box in boxes if str(box.get('id')) == target_box_id]
-
-
-def _serialize_boxes_for_prompt(boxes):
-    items = []
-    for box in boxes or []:
-        grounding = _box_to_grounding(box)
-        items.append({
-            'id': box.get('id'),
-            'className': box.get('className') or '',
-            'objectId': box.get('objectId'),
-            'attributes': box.get('attributes') or {},
-            'bbox_1000': [grounding['x1'], grounding['y1'], grounding['x2'], grounding['y2']],
-        })
-    return items
-
-
-def _build_contextual_chat_prompt(user_text, project, source_context, target_context, selected_box_id):
-    payload = {
-        'task': 'Answer the user question using the provided annotation context. Do not propose or execute actions unless the user explicitly asks for analysis of possible edits.',
-        'user_query': user_text,
-        'project': {
-            'classes': project.get('classes') or [],
-            'attributes': project.get('attributes') or {},
-            'attributeDescriptions': project.get('attribute_descriptions') or {},
-        },
-        'source': source_context,
-        'target': target_context,
-    }
-    if selected_box_id is not None:
-        payload['selectedBoxId'] = selected_box_id
-
-    instructions = (
-        "You are assisting a multi-view annotation workflow. "
-        "The images are ordered as follows: image 1 is the source frame. "
-        "If a target frame is present, image 2 is the target frame. "
-        "Bounding boxes are expressed as [x1, y1, x2, y2] normalized to the range [0, 1000]. "
-        "Use only the provided context. If a box context is omitted, do not invent one."
-    )
-    return f"{instructions}\n\nContext JSON:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
-
-
-def _log_agent_input(user_id, project_id, prompt_text, images):
-    enabled = os.environ.get('AGENT_INPUT_LOGGING', '').strip().lower() in {'1', 'true', 'yes', 'on'}
-    if not enabled:
-        return
-
-    image_meta = []
-    for index, image in enumerate(images or [], start=1):
-        image_meta.append({
-            'index': index,
-            'filename': image.get('filename'),
-            'mime_type': image.get('mime_type'),
-            'bytes': len(image.get('bytes') or b''),
-        })
-
-    print(
-        "AGENT_INPUT " + json.dumps({
-            'user_id': str(user_id),
-            'project_id': str(project_id) if project_id is not None else None,
-            'images': image_meta,
-            'prompt': prompt_text,
-        }, ensure_ascii=False),
-        flush=True,
-    )
 
 @app.route('/videos', methods=['GET'])
 def get_videos():
@@ -351,6 +267,7 @@ def chatbot(current_user):
         target_box_id = data.get('target_box_id') or 'none'
         selected_box_id = data.get('selected_box_id')
         current_boxes_raw = data.get('current_boxes') or []
+        chat_history_raw = data.get('chat_history') or []
     else:
         text = (request.form.get('text') or '').strip()
         project_id = request.form.get('project_id')
@@ -362,6 +279,7 @@ def chatbot(current_user):
         target_box_id = request.form.get('target_box_id') or 'none'
         selected_box_id = request.form.get('selected_box_id')
         current_boxes_raw = request.form.get('current_boxes') or '[]'
+        chat_history_raw = request.form.get('chat_history') or '[]'
 
     try:
         current_boxes = current_boxes_raw if isinstance(current_boxes_raw, list) else json.loads(current_boxes_raw)
@@ -369,6 +287,24 @@ def chatbot(current_user):
         current_boxes = []
     if not isinstance(current_boxes, list):
         current_boxes = []
+
+    try:
+        chat_history = chat_history_raw if isinstance(chat_history_raw, list) else json.loads(chat_history_raw)
+    except (TypeError, ValueError):
+        chat_history = []
+    if not isinstance(chat_history, list):
+        chat_history = []
+    normalized_chat_history = []
+    for item in chat_history:
+        if not isinstance(item, dict):
+            continue
+        role = (item.get('role') or '').strip()
+        text_value = (item.get('text') or '').strip()
+        if role and text_value:
+            normalized_chat_history.append({
+                'role': role,
+                'text': text_value,
+            })
 
     contextual_text = text
     contextual_images = []
@@ -385,7 +321,7 @@ def chatbot(current_user):
             return jsonify({"error": "source_video_index and source_sample_index are required"}), 400
 
         try:
-            source_frame_bytes, source_info = _read_frame_bytes(project, source_video_index, source_sample_index)
+            source_frame_bytes, _source_info = _read_frame_bytes(project, source_video_index, source_sample_index)
         except ChatbotServiceError as error:
             return jsonify({"error": error.message}), error.status_code
 
@@ -398,24 +334,19 @@ def chatbot(current_user):
                 source_sample_index,
             )
 
-        source_context = {
-            'viewIndex': source_video_index,
-            'viewName': (project.get('selected_videos') or [])[source_video_index] if source_video_index < len(project.get('selected_videos') or []) else f"view_{source_video_index}",
-            'sampleIndex': source_sample_index,
-            'frameStep': source_info['step'],
-            'selectedBoxId': selected_box_id,
-            'annotations': _serialize_boxes_for_prompt(source_boxes),
-        }
         contextual_images.append({
             'bytes': source_frame_bytes,
             'mime_type': 'image/jpeg',
             'filename': f"source_view_{source_video_index}_frame_{source_sample_index}.jpg",
         })
-
-        target_context = {
-            'scope': target_scope,
-            'annotations': _serialize_boxes_for_prompt(_select_box_subset(source_boxes, target_box_id)),
-        }
+        boxes_for_current_frame = None
+        target_box = None
+        selected_boxes = serialize_boxes_for_prompt(select_box_subset(source_boxes, target_box_id))
+        if target_box_id == 'all':
+            boxes_for_current_frame = serialize_boxes_for_prompt(source_boxes)
+        elif target_box_id not in (None, '', 'none'):
+            target_box = selected_boxes[0] if selected_boxes else None
+        has_additional_frame = False
 
         if target_scope != 'none':
             try:
@@ -425,31 +356,27 @@ def chatbot(current_user):
                 return jsonify({"error": "target frame metadata is invalid"}), 400
 
             try:
-                target_frame_bytes, target_info = _read_frame_bytes(project, target_video_index, target_sample_index)
+                target_frame_bytes, _target_info = _read_frame_bytes(project, target_video_index, target_sample_index)
             except ChatbotServiceError as error:
                 return jsonify({"error": error.message}), error.status_code
 
-            target_context.update({
-                'viewIndex': target_video_index,
-                'viewName': (project.get('selected_videos') or [])[target_video_index] if target_video_index < len(project.get('selected_videos') or []) else f"view_{target_video_index}",
-                'sampleIndex': target_sample_index,
-                'frameStep': target_info['step'],
-            })
+            has_additional_frame = True
             contextual_images.append({
                 'bytes': target_frame_bytes,
                 'mime_type': 'image/jpeg',
                 'filename': f"target_view_{target_video_index}_frame_{target_sample_index}.jpg",
             })
 
-        contextual_text = _build_contextual_chat_prompt(
+        contextual_text = build_contextual_chat_prompt(
             text,
             project,
-            source_context,
-            target_context,
-            selected_box_id,
+            has_additional_frame=has_additional_frame,
+            boxes_for_current_frame=boxes_for_current_frame,
+            target_box=target_box,
+            chat_history=normalized_chat_history,
         )
 
-    _log_agent_input(
+    log_agent_input(
         current_user['_id'],
         project_id,
         contextual_text,

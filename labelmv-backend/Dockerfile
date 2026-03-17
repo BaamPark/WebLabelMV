@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py ./
 COPY chatbot_service.py ./
+COPY agent_prompting.py ./
 
 # Env defaults (overridden by compose)
 ENV HOST=0.0.0.0 \
@@ -25,4 +26,4 @@ ENV HOST=0.0.0.0 \
 EXPOSE 56250
 
 # Run with gunicorn for production
-CMD ["gunicorn", "-w", "3", "-b", "0.0.0.0:56250", "app:app"]
+CMD ["gunicorn", "-w", "3", "-b", "0.0.0.0:56250", "--timeout", "300", "app:app"]

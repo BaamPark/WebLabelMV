@@ -1,6 +1,6 @@
 .chatbot-panel {
   position: fixed;
-  right: 24px;
+  left: 24px;
   bottom: 92px;
   width: min(420px, calc(100vw - 32px));
   height: min(72vh, 760px);
@@ -11,6 +11,10 @@
   display: flex;
   flex-direction: column;
   z-index: 40;
+}
+
+.chatbot-panel-hidden {
+  display: none;
 }
 
 .chatbot-panel-header {
@@ -40,6 +44,22 @@
   font-weight: 600;
   cursor: pointer;
   align-self: flex-start;
+}
+
+.chatbot-panel-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.chatbot-renew-button {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 12px;
+  background: #e5e7eb;
+  color: #1f2937;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .chatbot-panel-messages {
@@ -158,7 +178,7 @@
 
 @media (max-width: 700px) {
   .chatbot-panel {
-    right: 12px;
+    left: 12px;
     bottom: 76px;
     width: calc(100vw - 24px);
     height: min(68vh, 680px);
