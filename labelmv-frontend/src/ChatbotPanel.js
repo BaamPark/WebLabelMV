@@ -10,6 +10,7 @@ const shortenLabel = (text, maxLength = 28) => {
 const ChatbotPanel = ({
   authToken,
   onClose,
+  projectId = '',
   currentVideoIndex = 0,
   currentSampleIndex = 0,
   sampledCount = 0,
@@ -103,6 +104,9 @@ const ChatbotPanel = ({
 
     const formData = new FormData();
     formData.append('text', trimmedPrompt);
+    if (projectId) {
+      formData.append('project_id', projectId);
+    }
     formData.append('source_video_index', String(currentVideoIndex));
     formData.append('source_sample_index', String(currentSampleIndex));
     formData.append('target_scope', targetScope);
@@ -111,6 +115,7 @@ const ChatbotPanel = ({
       formData.append('target_sample_index', String(targetSampleIndex));
     }
     formData.append('target_box_id', targetBoxId);
+    formData.append('current_boxes', JSON.stringify(currentBoxes || []));
     if (selectedBoxId != null) {
       formData.append('selected_box_id', String(selectedBoxId));
     }

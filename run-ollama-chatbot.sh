@@ -12,5 +12,6 @@ export CHATBOT_MODEL="qwen3-vl:8b-instruct"
 export CHATBOT_TIMEOUT_SECONDS="180"
 export CHATBOT_MAX_TOKENS="1024"
 export CHATBOT_MAX_IMAGE_BYTES="10485760"
+export AGENT_INPUT_LOGGING="true"
 
 docker compose up --build "$@"

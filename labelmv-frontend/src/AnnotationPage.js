@@ -747,6 +747,7 @@ const AnnotationPage = () => {
         <ChatbotPanel
           authToken={authToken}
           onClose={() => setIsChatOpen(false)}
+          projectId={projectId}
           currentVideoIndex={selectedVideoIndex}
           currentSampleIndex={sampleIndex}
           sampledCount={sampledCount}

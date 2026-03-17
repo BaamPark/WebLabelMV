@@ -40,7 +40,7 @@ def load_chatbot_config():
         model_id=os.environ.get("CHATBOT_MODEL", DEFAULT_MODEL_ID).strip() or DEFAULT_MODEL_ID,
         timeout_seconds=max(10, _read_int_env("CHATBOT_TIMEOUT_SECONDS", 180)),
         max_tokens=max(32, _read_int_env("CHATBOT_MAX_TOKENS", 256)),
-        max_prompt_chars=max(1, _read_int_env("CHATBOT_MAX_PROMPT_CHARS", 4000)),
+        max_prompt_chars=max(1, _read_int_env("CHATBOT_MAX_PROMPT_CHARS", 12000)),
         max_image_bytes=max(1024, _read_int_env("CHATBOT_MAX_IMAGE_BYTES", 5 * 1024 * 1024)),
     )
 
@@ -78,6 +78,24 @@ class ChatbotProxyService:
             raise ChatbotServiceError("uploaded file must be an image", status_code=400)
         return image_bytes, normalized_mime_type, filename or "upload"
 
+    def validate_images(self, images):
+        normalized = []
+        for image in images or []:
+            if not isinstance(image, dict):
+                continue
+            image_bytes, mime_type, filename = self.validate_image(
+                image.get("bytes"),
+                image.get("mime_type"),
+                image.get("filename"),
+            )
+            if image_bytes:
+                normalized.append({
+                    "bytes": image_bytes,
+                    "mime_type": mime_type,
+                    "filename": filename,
+                })
+        return normalized
+
     def _request_url(self):
         if not self.config.base_url:
             raise ChatbotServiceError("CHATBOT_BASE_URL is not configured", status_code=503)
@@ -89,7 +107,7 @@ class ChatbotProxyService:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
         return headers
 
-    def _build_request(self, prompt_text, image_bytes, mime_type, filename):
+    def _build_request(self, prompt_text, images):
         if self.config.provider == "ollama":
             payload = {
                 "model": self.config.model_id,
@@ -100,8 +118,11 @@ class ChatbotProxyService:
                     "temperature": 0.2,
                 },
             }
-            if image_bytes:
-                payload["images"] = [base64.b64encode(image_bytes).decode("utf-8")]
+            if images:
+                payload["images"] = [
+                    base64.b64encode(item["bytes"]).decode("utf-8")
+                    for item in images
+                ]
             return payload
 
         payload = {
@@ -110,10 +131,11 @@ class ChatbotProxyService:
             "max_new_tokens": self.config.max_tokens,
             "temperature": 0.2,
         }
-        if image_bytes:
-            payload["image_base64"] = base64.b64encode(image_bytes).decode("utf-8")
-            payload["image_mime_type"] = mime_type
-            payload["image_name"] = filename
+        if images:
+            image = images[0]
+            payload["image_base64"] = base64.b64encode(image["bytes"]).decode("utf-8")
+            payload["image_mime_type"] = image["mime_type"]
+            payload["image_name"] = image["filename"]
         return payload
 
     def _extract_reply(self, data):
@@ -121,14 +143,21 @@ class ChatbotProxyService:
             return (data.get("response") or "").strip()
         return (data.get("reply") or "").strip()
 
-    def generate_reply(self, text, image_bytes=None, mime_type=None, filename=None):
+    def generate_reply(self, text, image_bytes=None, mime_type=None, filename=None, images=None):
         prompt_text = self.validate_text(text)
+        normalized_images = self.validate_images(images)
         image_bytes, mime_type, filename = self.validate_image(image_bytes, mime_type, filename)
+        if image_bytes:
+            normalized_images.append({
+                "bytes": image_bytes,
+                "mime_type": mime_type,
+                "filename": filename,
+            })
 
-        if not prompt_text and not image_bytes:
+        if not prompt_text and not normalized_images:
             raise ChatbotServiceError("text or image is required", status_code=400)
 
-        payload = self._build_request(prompt_text, image_bytes, mime_type, filename)
+        payload = self._build_request(prompt_text, normalized_images)
 
         try:
             response = requests.post(
