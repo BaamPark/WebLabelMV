@@ -16,7 +16,7 @@ import io
 
 from agent_prompting import (
     build_contextual_chat_prompt,
-    log_agent_input,
+    log_agent_messages,
     select_box_subset,
     serialize_boxes_for_prompt,
 )
@@ -324,8 +324,7 @@ def chatbot(current_user):
                 'text': text_value,
             })
 
-    contextual_text = text
-    contextual_images = []
+    ollama_messages = [{'role': 'user', 'content': text}]
 
     if project_id:
         project = _get_owned_project(current_user, project_id)
@@ -352,11 +351,11 @@ def chatbot(current_user):
                 source_sample_index,
             )
 
-        contextual_images.append({
+        contextual_images = [{
             'bytes': source_frame_bytes,
             'mime_type': 'image/jpeg',
             'filename': f"source_view_{source_video_index}_frame_{source_sample_index}.jpg",
-        })
+        }]
         boxes_for_current_frame = None
         target_box = None
         selected_boxes = serialize_boxes_for_prompt(select_box_subset(source_boxes, target_box_id))
@@ -391,26 +390,44 @@ def chatbot(current_user):
                 'filename': f"target_view_{target_video_index}_frame_{target_sample_index}.jpg",
             })
 
-        contextual_text = build_contextual_chat_prompt(
-            text,
+        first_user_text = text
+        remaining_history = normalized_chat_history
+        if normalized_chat_history and normalized_chat_history[0].get('role') == 'user':
+            first_user_text = normalized_chat_history[0].get('text') or text
+            remaining_history = normalized_chat_history[1:]
+
+        grounded_first_user = build_contextual_chat_prompt(
+            first_user_text,
             project,
             image_relationship_text=image_relationship_text,
             boxes_for_current_frame=boxes_for_current_frame,
             target_box=target_box,
-            chat_history=normalized_chat_history,
         )
+        ollama_messages = [{
+            'role': 'user',
+            'content': grounded_first_user,
+            'images': contextual_images,
+        }]
+        for item in remaining_history:
+            ollama_messages.append({
+                'role': item['role'],
+                'content': item['text'],
+            })
+        if normalized_chat_history:
+            ollama_messages.append({
+                'role': 'user',
+                'content': text,
+            })
 
-    log_agent_input(
+    log_agent_messages(
         current_user['_id'],
         project_id,
-        contextual_text,
-        contextual_images,
+        ollama_messages,
     )
 
     try:
         reply = chatbot_service.generate_reply(
-            text=contextual_text,
-            images=contextual_images,
+            messages=ollama_messages,
         )
     except ChatbotServiceError as error:
         return jsonify({"error": error.message}), error.status_code

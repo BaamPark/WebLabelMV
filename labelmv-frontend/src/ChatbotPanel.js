@@ -25,17 +25,23 @@ const ChatbotPanel = ({
   const [error, setError] = useState('');
   const [targetScope, setTargetScope] = useState('none');
   const [targetBoxId, setTargetBoxId] = useState('none');
+  const [sessionContext, setSessionContext] = useState(null);
 
   const videoOptions = selectedVideos.length
     ? selectedVideos
     : Array.from({ length: currentVideoIndex + 1 }, (_, index) => `Video ${index + 1}`);
   const viewLabels = videoOptions.map((videoName, index) => `View ${index + 1}: ${shortenLabel(videoName || `Video ${index + 1}`)}`);
   const maxSampleIndex = Math.max(0, sampledCount - 1);
-  const sourceVideoLabel = viewLabels[currentVideoIndex] || `View ${currentVideoIndex + 1}`;
+  const activeSourceVideoIndex = sessionContext ? sessionContext.sourceVideoIndex : currentVideoIndex;
+  const activeSourceSampleIndex = sessionContext ? sessionContext.sourceSampleIndex : currentSampleIndex;
+  const activeCurrentBoxes = sessionContext ? sessionContext.currentBoxes : currentBoxes;
+  const activeTargetScope = sessionContext ? sessionContext.targetScope : targetScope;
+  const activeTargetBoxId = sessionContext ? sessionContext.targetBoxId : targetBoxId;
+  const sourceVideoLabel = viewLabels[activeSourceVideoIndex] || `View ${activeSourceVideoIndex + 1}`;
   const targetBoxOptions = [
     { value: 'none', label: 'None' },
     { value: 'all', label: 'All' },
-    ...currentBoxes.map((box, index) => ({
+    ...activeCurrentBoxes.map((box, index) => ({
       value: String(box.id),
       label: `Box ${index + 1}${box.className ? ` • ${box.className}` : ''}${box.objectId != null && box.objectId !== 0 ? ` • ID ${box.objectId}` : ''}`,
     })),
@@ -53,29 +59,32 @@ const ChatbotPanel = ({
       })),
   ];
 
-  let targetVideoIndex = currentVideoIndex;
-  let targetSampleIndex = currentSampleIndex;
+  let targetVideoIndex = sessionContext ? sessionContext.targetVideoIndex : activeSourceVideoIndex;
+  let targetSampleIndex = sessionContext ? sessionContext.targetSampleIndex : activeSourceSampleIndex;
   let targetSummary = 'No extra target context';
 
-  if (targetScope === 'previous_current_view') {
-    targetSampleIndex = clampIndex(currentSampleIndex - 1, maxSampleIndex);
+  if (!sessionContext && activeTargetScope === 'previous_current_view') {
+    targetSampleIndex = clampIndex(activeSourceSampleIndex - 1, maxSampleIndex);
     targetSummary = `Target ${sourceVideoLabel} frame ${targetSampleIndex}`;
-  } else if (targetScope === 'next_current_view') {
-    targetSampleIndex = clampIndex(currentSampleIndex + 1, maxSampleIndex);
+  } else if (!sessionContext && activeTargetScope === 'next_current_view') {
+    targetSampleIndex = clampIndex(activeSourceSampleIndex + 1, maxSampleIndex);
     targetSummary = `Target ${sourceVideoLabel} frame ${targetSampleIndex}`;
-  } else if (targetScope.startsWith('view_')) {
-    const parsedIndex = parseInt(targetScope.slice(5), 10);
+  } else if (!sessionContext && activeTargetScope.startsWith('view_')) {
+    const parsedIndex = parseInt(activeTargetScope.slice(5), 10);
     if (Number.isFinite(parsedIndex)) {
       targetVideoIndex = parsedIndex;
     }
     const targetVideoLabel = viewLabels[targetVideoIndex] || `View ${targetVideoIndex + 1}`;
     targetSummary = `Target ${targetVideoLabel} frame ${targetSampleIndex}`;
+  } else if (sessionContext && activeTargetScope !== 'none') {
+    const targetVideoLabel = viewLabels[targetVideoIndex] || `View ${targetVideoIndex + 1}`;
+    targetSummary = `Target ${targetVideoLabel} frame ${targetSampleIndex}`;
   }
   let targetBoxSummary = 'No selected box from current frame';
-  if (targetBoxId === 'all') {
+  if (activeTargetBoxId === 'all') {
     targetBoxSummary = 'All current-frame annotations';
-  } else if (targetBoxId !== 'none') {
-    targetBoxSummary = `Selected box ${targetBoxId} from current frame`;
+  } else if (activeTargetBoxId !== 'none') {
+    targetBoxSummary = `Selected box ${activeTargetBoxId} from current frame`;
   }
 
   const resetComposer = () => {
@@ -89,6 +98,7 @@ const ChatbotPanel = ({
     setError('');
     setTargetScope('none');
     setTargetBoxId('none');
+    setSessionContext(null);
   };
 
   const handleSubmit = async (event) => {
@@ -113,7 +123,7 @@ const ChatbotPanel = ({
         id: Date.now(),
         role: 'user',
         text: trimmedPrompt,
-        meta: `Source ${sourceVideoLabel} • frame ${currentSampleIndex} • ${targetSummary} • ${targetBoxSummary}${selectedBoxId != null ? ` • UI Selected Box ${selectedBoxId}` : ''}`,
+        meta: `Source ${sourceVideoLabel} • frame ${activeSourceSampleIndex} • ${targetSummary} • ${targetBoxSummary}${selectedBoxId != null ? ` • UI Selected Box ${selectedBoxId}` : ''}`,
       }
     ]);
     setIsLoading(true);
@@ -124,15 +134,15 @@ const ChatbotPanel = ({
     if (projectId) {
       formData.append('project_id', projectId);
     }
-    formData.append('source_video_index', String(currentVideoIndex));
-    formData.append('source_sample_index', String(currentSampleIndex));
-    formData.append('target_scope', targetScope);
-    if (targetScope !== 'none') {
+    formData.append('source_video_index', String(activeSourceVideoIndex));
+    formData.append('source_sample_index', String(activeSourceSampleIndex));
+    formData.append('target_scope', activeTargetScope);
+    if (activeTargetScope !== 'none') {
       formData.append('target_video_index', String(targetVideoIndex));
       formData.append('target_sample_index', String(targetSampleIndex));
     }
-    formData.append('target_box_id', targetBoxId);
-    formData.append('current_boxes', JSON.stringify(currentBoxes || []));
+    formData.append('target_box_id', activeTargetBoxId);
+    formData.append('current_boxes', JSON.stringify(activeCurrentBoxes || []));
     formData.append('chat_history', JSON.stringify(chatHistory));
     if (selectedBoxId != null) {
       formData.append('selected_box_id', String(selectedBoxId));
@@ -161,6 +171,17 @@ const ChatbotPanel = ({
           meta: [payload.provider, payload.model].filter(Boolean).join(' • '),
         },
       ]);
+      if (!sessionContext) {
+        setSessionContext({
+          sourceVideoIndex: currentVideoIndex,
+          sourceSampleIndex: currentSampleIndex,
+          targetScope,
+          targetVideoIndex,
+          targetSampleIndex,
+          targetBoxId,
+          currentBoxes,
+        });
+      }
       resetComposer();
     } catch (requestError) {
       setError(requestError.message || 'Failed to contact chatbot.');
@@ -209,8 +230,9 @@ const ChatbotPanel = ({
         <label className="chatbot-label" htmlFor="annotation-chatbot-target-scope">Target Frame</label>
         <select
           id="annotation-chatbot-target-scope"
-          value={targetScope}
+          value={activeTargetScope}
           onChange={(event) => setTargetScope(event.target.value)}
+          disabled={!!sessionContext}
         >
           {targetOptions.map((option) => (
             <option key={option.value} value={option.value}>
@@ -218,15 +240,13 @@ const ChatbotPanel = ({
             </option>
           ))}
         </select>
-        <div className="chatbot-message-meta">
-          Source {sourceVideoLabel} frame {currentSampleIndex} {targetScope === 'none' ? '-> no extra target' : `-> ${targetSummary}`}
-        </div>
 
         <label className="chatbot-label" htmlFor="annotation-chatbot-target-box">Selected Box From Current Frame</label>
         <select
           id="annotation-chatbot-target-box"
-          value={targetBoxId}
+          value={activeTargetBoxId}
           onChange={(event) => setTargetBoxId(event.target.value)}
+          disabled={!!sessionContext}
         >
           {targetBoxOptions.map((option) => (
             <option key={option.value} value={option.value}>
@@ -234,13 +254,6 @@ const ChatbotPanel = ({
             </option>
           ))}
         </select>
-        <div className="chatbot-message-meta">
-          {targetBoxId === 'none'
-            ? 'No specific current-frame box will be added.'
-            : targetBoxId === 'all'
-              ? 'All current-frame annotations will stay in context.'
-              : `Current-frame box ${targetBoxId} will be included as the selected box.`}
-        </div>
 
         <label className="chatbot-label" htmlFor="annotation-chatbot-prompt">Prompt</label>
         <textarea

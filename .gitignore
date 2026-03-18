@@ -4,3 +4,5 @@
 videos/
 .venv/
 *.pyc
+*.png
+*.ipynb

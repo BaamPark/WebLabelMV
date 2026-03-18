@@ -43,7 +43,7 @@ def serialize_boxes_for_prompt(boxes):
 
 
 def build_contextual_chat_prompt(user_text, project, image_relationship_text=None,
-                                 boxes_for_current_frame=None, target_box=None, chat_history=None):
+                                 boxes_for_current_frame=None, target_box=None):
     payload = {
         'task': 'Answer the user question using the provided annotation context. Do not propose or execute actions unless the user explicitly asks for analysis of possible edits.',
         'project': {
@@ -55,8 +55,6 @@ def build_contextual_chat_prompt(user_text, project, image_relationship_text=Non
         payload['boxes_for_current_frame'] = boxes_for_current_frame
     if target_box is not None:
         payload['selected_box_from_current_frame'] = target_box
-    if chat_history:
-        payload['chat_history'] = chat_history
 
     image_order = "Image order:\n- Image 1: current frame\n"
     if image_relationship_text:
@@ -83,21 +81,31 @@ def log_agent_input(user_id, project_id, prompt_text, images):
     if not enabled:
         return
 
-    image_meta = []
-    for index, image in enumerate(images or [], start=1):
-        image_meta.append({
-            'index': index,
-            'filename': image.get('filename'),
-            'mime_type': image.get('mime_type'),
-            'bytes': len(image.get('bytes') or b''),
-        })
+
+def log_agent_messages(user_id, project_id, messages):
+    enabled = os.environ.get('AGENT_INPUT_LOGGING', '').strip().lower() in {'1', 'true', 'yes', 'on'}
+    if not enabled:
+        return
+
+    sanitized = []
+    for message in messages or []:
+        entry = {
+            'role': message.get('role'),
+            'content': message.get('content'),
+        }
+        if message.get('images'):
+            entry['images'] = [{
+                'filename': image.get('filename'),
+                'mime_type': image.get('mime_type'),
+                'bytes': len(image.get('bytes') or b''),
+            } for image in message.get('images') or []]
+        sanitized.append(entry)
 
     print(
         "AGENT_INPUT " + json.dumps({
             'user_id': str(user_id),
             'project_id': str(project_id) if project_id is not None else None,
-            'images': image_meta,
-            'prompt': prompt_text,
+            'messages': sanitized,
         }, ensure_ascii=False),
         flush=True,
     )
