@@ -3,6 +3,8 @@
 .vscode/
 videos/
 .venv/
+annotations/
+*.pt
 *.pyc
 *.png
 *.ipynb

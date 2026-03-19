@@ -64,22 +64,24 @@ def build_contextual_chat_prompt(user_text, project, image_relationship_text=Non
             'classes': project.get('classes') or [],
             'attributeDescriptions': project.get('attribute_descriptions') or {},
         },
+        'frame_context': {
+            'current_frame': 'available via tools',
+            'target_frame': image_relationship_text or None,
+        },
     }
     if boxes_for_current_frame is not None:
         payload['boxes_for_current_frame'] = boxes_for_current_frame
     if target_box is not None:
         payload['selected_box_from_current_frame'] = target_box
 
-    image_order = "Image order:\n- Image 1: current frame\n"
-    if image_relationship_text:
-        image_order += f"- Image 2: {image_relationship_text}\n"
-        image_order += "- Target frame: Image 2\n"
-    else:
-        image_order += "- Target frame: Image 1\n"
-
     action_instructions = (
+        "You do not directly perceive image pixels in this workflow. When you need visual evidence, call the "
+        "detect_object tool first and reason from its returned detections. "
         "If the user asks you to create a new annotation box or adjust an existing box, append exactly one final "
         "line beginning with ACTION_JSON: followed by compact JSON on the same line. "
+        "For the supported detection tool, use this schema: "
+        "{\"action\":\"detect_object\",\"target_frame\":\"current|target\",\"className\":\"<project class or empty>\","
+        "\"max_detections\":<positive integer optional>}. "
         "For the supported create action, use either this single-box schema: "
         "{\"action\":\"create_box\",\"target_frame\":\"current|target\",\"className\":\"<project class>\","
         "\"bbox_1000\":[x1,y1,x2,y2]} "
@@ -104,9 +106,10 @@ def build_contextual_chat_prompt(user_text, project, image_relationship_text=Non
 
     instructions = (
         "You are assisting a multi-view annotation workflow. "
-        f"{image_order}"
         "Bounding boxes are expressed as [x1, y1, x2, y2] normalized to the range [0, 1000]. "
         "Use only the provided context. If a frame or box context is omitted, do not invent it. "
+        "You may use more than one tool step: for example, call detect_object first, read the tool result, "
+        "and then call an annotation tool. After all needed tools are done, produce a normal final response. "
         f"{action_instructions}"
     )
     return (
@@ -120,18 +123,53 @@ def extract_action_json(reply_text):
     if not isinstance(reply_text, str):
         return None
     matches = re.findall(r'^ACTION_JSON:\s*(\{.*\})\s*$', reply_text, flags=re.MULTILINE)
-    if not matches:
-        return None
-    try:
-        return json.loads(matches[-1])
-    except json.JSONDecodeError:
-        return None
+    candidates = list(matches)
+
+    stripped = reply_text.strip()
+    if stripped.startswith('{') and stripped.endswith('}'):
+        candidates.append(stripped)
+    else:
+        for line in reply_text.splitlines():
+            candidate = line.strip()
+            if candidate.startswith('{') and candidate.endswith('}'):
+                candidates.append(candidate)
+
+    for candidate in reversed(candidates):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and isinstance(parsed.get('action'), str) and parsed.get('action').strip():
+            return parsed
+    return None
 
 
 def strip_action_json(reply_text):
     if not isinstance(reply_text, str):
         return ''
-    return re.sub(r'^\s*ACTION_JSON:\s*\{.*\}\s*$', '', reply_text, flags=re.MULTILINE).strip()
+    stripped = reply_text.strip()
+    if stripped.startswith('{') and stripped.endswith('}'):
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(parsed, dict) and isinstance(parsed.get('action'), str) and parsed.get('action').strip():
+                return ''
+    cleaned = re.sub(r'^\s*ACTION_JSON:\s*\{.*\}\s*$', '', reply_text, flags=re.MULTILINE)
+    lines = []
+    for line in cleaned.splitlines():
+        candidate = line.strip()
+        if candidate.startswith('{') and candidate.endswith('}'):
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                lines.append(line)
+                continue
+            if isinstance(parsed, dict) and isinstance(parsed.get('action'), str) and parsed.get('action').strip():
+                continue
+        lines.append(line)
+    return '\n'.join(lines).strip()
 
 
 def log_agent_input(user_id, project_id, prompt_text, images):

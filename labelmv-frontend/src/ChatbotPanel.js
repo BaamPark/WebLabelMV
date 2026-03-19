@@ -404,6 +404,16 @@ const ChatbotPanel = ({
     }
   };
 
+  const handlePromptKeyDown = (event) => {
+    if (event.key !== 'Enter' || event.shiftKey) {
+      return;
+    }
+    event.preventDefault();
+    if (!isLoading) {
+      handleSubmit(event);
+    }
+  };
+
   return (
     <section className={`chatbot-panel ${isOpen ? '' : 'chatbot-panel-hidden'}`} aria-label="AI assistant">
       <div className="chatbot-panel-header">
@@ -469,6 +479,7 @@ const ChatbotPanel = ({
           rows={4}
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
+          onKeyDown={handlePromptKeyDown}
           placeholder="Ask a question about the frame or annotation."
         />
 

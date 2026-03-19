@@ -13,6 +13,7 @@ from bson import ObjectId
 import cv2
 import math
 import io
+import requests
 
 from agent_prompting import (
     build_contextual_chat_prompt,
@@ -40,6 +41,8 @@ app.config['MAX_CONTENT_LENGTH'] = max(
     int(os.environ.get('MAX_CONTENT_LENGTH', chatbot_config.max_image_bytes + 1024 * 1024))
 )
 chatbot_service = ChatbotProxyService(chatbot_config)
+ML_BACKEND_URL = os.environ.get('ML_BACKEND_URL', 'http://host.docker.internal:8001/detect').strip()
+AGENT_MAX_TOOL_STEPS = max(1, int(os.environ.get('AGENT_MAX_TOOL_STEPS', '4')))
 
 # In-memory storage for annotations (for simplicity, will be replaced with database)
 annotations_storage = {}
@@ -365,6 +368,45 @@ def _save_target_boxes(project, current_user, frame_target, boxes):
     return normalized_boxes, None
 
 
+def _detect_objects_with_ml_backend(project, frame_target, class_name=None, max_detections=None):
+    if not ML_BACKEND_URL:
+        return None, "ML_BACKEND_URL is not configured"
+
+    try:
+        frame_bytes, _info = _read_frame_bytes(project, frame_target['video_index'], frame_target['sample_index'])
+    except ChatbotServiceError as error:
+        return None, error.message
+
+    files = {
+        'image': ('frame.jpg', frame_bytes, 'image/jpeg'),
+    }
+    data = {
+        'target_frame': frame_target['label'],
+    }
+    if isinstance(class_name, str) and class_name.strip():
+        data['class_name'] = class_name.strip()
+    if isinstance(max_detections, int) and max_detections > 0:
+        data['max_detections'] = str(max_detections)
+
+    try:
+        response = requests.post(ML_BACKEND_URL, files=files, data=data, timeout=300)
+    except requests.RequestException as error:
+        return None, f"detect_object request failed: {error}"
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+
+    if not response.ok:
+        return None, payload.get('error') or f"detect_object backend returned {response.status_code}"
+
+    detections = payload.get('detections')
+    if not isinstance(detections, list):
+        return None, "detect_object backend returned an invalid detections payload"
+    return detections, None
+
+
 def _find_target_box(existing_boxes, box_id, action_name, frame_target):
     if box_id is None or str(box_id).strip() == '':
         return None, None, {
@@ -415,6 +457,58 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
         }
 
     existing_boxes = _load_target_boxes(project, current_user, frame_target)
+
+    if action_name == 'detect_object':
+        class_name = action_payload.get('className')
+        if class_name is not None and (not isinstance(class_name, str) or (class_name.strip() and class_name.strip() not in (project.get('classes') or []))):
+            return None, {
+                'success': False,
+                'message': f"detect_object className '{class_name}' is not in project classes",
+            }
+        max_detections = action_payload.get('max_detections')
+        if max_detections is not None:
+            try:
+                max_detections = int(max_detections)
+            except (TypeError, ValueError):
+                return None, {
+                    'success': False,
+                    'message': "detect_object max_detections must be an integer",
+                }
+            if max_detections <= 0:
+                return None, {
+                    'success': False,
+                    'message': "detect_object max_detections must be greater than 0",
+                }
+
+        detections, detection_error = _detect_objects_with_ml_backend(
+            project,
+            frame_target,
+            class_name=class_name,
+            max_detections=max_detections,
+        )
+        if detection_error:
+            return None, {
+                'success': False,
+                'message': detection_error,
+            }
+
+        return {
+            'action': 'detect_object',
+            'target_frame': target_frame,
+            'video_index': frame_target['video_index'],
+            'sample_index': frame_target['sample_index'],
+            'detections': detections,
+        }, {
+            'success': True,
+            'message': (
+                f"Detected {len(detections)} object(s) in the {frame_target['label']} "
+                f"(video_index={frame_target['video_index']}, sample_index={frame_target['sample_index']})"
+            ),
+            'action': 'detect_object',
+            'video_index': frame_target['video_index'],
+            'sample_index': frame_target['sample_index'],
+            'detections': detections,
+        }
 
     if action_name == 'create_box':
         requested_boxes = action_payload.get('boxes')
@@ -987,11 +1081,6 @@ def chatbot(current_user):
         except (TypeError, ValueError):
             return jsonify({"error": "source_video_index and source_sample_index are required"}), 400
 
-        try:
-            source_frame_bytes, _source_info = _read_frame_bytes(project, source_video_index, source_sample_index)
-        except ChatbotServiceError as error:
-            return jsonify({"error": error.message}), error.status_code
-
         source_boxes = current_boxes
         if not source_boxes:
             source_boxes = _get_annotation_boxes_for(
@@ -1001,11 +1090,6 @@ def chatbot(current_user):
                 source_sample_index,
             )
 
-        contextual_images = [{
-            'bytes': source_frame_bytes,
-            'mime_type': 'image/jpeg',
-            'filename': f"source_view_{source_video_index}_frame_{source_sample_index}.jpg",
-        }]
         boxes_for_current_frame = serialize_boxes_for_prompt(source_boxes)
         target_box = None
         selected_boxes = serialize_boxes_for_prompt(select_box_subset(source_boxes, target_box_id))
@@ -1020,23 +1104,12 @@ def chatbot(current_user):
             except (TypeError, ValueError):
                 return jsonify({"error": "target frame metadata is invalid"}), 400
 
-            try:
-                target_frame_bytes, _target_info = _read_frame_bytes(project, target_video_index, target_sample_index)
-            except ChatbotServiceError as error:
-                return jsonify({"error": error.message}), error.status_code
-
-            has_additional_frame = True
             image_relationship_text = _describe_image_relationship(
                 target_scope,
                 source_video_index,
                 target_video_index,
                 project,
             )
-            contextual_images.append({
-                'bytes': target_frame_bytes,
-                'mime_type': 'image/jpeg',
-                'filename': f"target_view_{target_video_index}_frame_{target_sample_index}.jpg",
-            })
 
         first_user_text = text
         remaining_history = normalized_chat_history
@@ -1054,7 +1127,6 @@ def chatbot(current_user):
         ollama_messages = [{
             'role': 'user',
             'content': grounded_first_user,
-            'images': contextual_images,
         }]
         for item in remaining_history:
             ollama_messages.append({
@@ -1075,29 +1147,34 @@ def chatbot(current_user):
 
     @stream_with_context
     def generate_events():
-        yield json.dumps({
-            "type": "status",
-            "message": "Waiting for response",
-        }) + "\n"
-
-        try:
-            reply = chatbot_service.generate_reply(
-                messages=ollama_messages,
-            )
-        except ChatbotServiceError as error:
-            yield json.dumps({
-                "type": "error",
-                "error": error.message,
-                "status_code": error.status_code,
-            }) + "\n"
-            return
-
-        action_payload = extract_action_json(reply)
+        messages = list(ollama_messages)
         executed_action = None
         action_result = None
-        final_reply = reply
+        final_reply = ""
 
-        if project_id and action_payload:
+        for _step in range(AGENT_MAX_TOOL_STEPS):
+            yield json.dumps({
+                "type": "status",
+                "message": "Waiting for response",
+            }) + "\n"
+
+            try:
+                reply = chatbot_service.generate_reply(
+                    messages=messages,
+                )
+            except ChatbotServiceError as error:
+                yield json.dumps({
+                    "type": "error",
+                    "error": error.message,
+                    "status_code": error.status_code,
+                }) + "\n"
+                return
+
+            action_payload = extract_action_json(reply)
+            if not project_id or not action_payload:
+                final_reply = strip_action_json(reply)
+                break
+
             yield json.dumps({
                 "type": "status",
                 "message": "Executing tools",
@@ -1113,8 +1190,8 @@ def chatbot(current_user):
                 target_video_index,
                 target_sample_index,
             )
-            followup_messages = [
-                *ollama_messages,
+
+            messages.extend([
                 {
                     'role': 'assistant',
                     'content': reply,
@@ -1123,34 +1200,19 @@ def chatbot(current_user):
                     'role': 'user',
                     'content': _build_tool_result_message(action_payload, action_result),
                 },
-            ]
+            ])
 
             log_agent_messages(
                 current_user['_id'],
                 project_id,
-                followup_messages,
+                messages,
             )
-
-            yield json.dumps({
-                "type": "status",
-                "message": "Waiting for response",
-            }) + "\n"
-
-            try:
-                final_reply = chatbot_service.generate_reply(
-                    messages=followup_messages,
-                )
-            except ChatbotServiceError as error:
-                yield json.dumps({
-                    "type": "error",
-                    "error": error.message,
-                    "status_code": error.status_code,
-                }) + "\n"
-                return
+        else:
+            final_reply = "I reached the maximum tool-usage steps before producing a final response."
 
         yield json.dumps({
             "type": "result",
-            "reply": strip_action_json(final_reply),
+            "reply": final_reply,
             "model": chatbot_config.model_id,
             "provider": chatbot_config.provider,
             "baseUrl": chatbot_config.base_url,

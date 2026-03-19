@@ -6,7 +6,7 @@ from urllib.parse import quote
 import requests
 
 
-DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-2B-Instruct"
+DEFAULT_MODEL_ID = "qwen3-vl:8b-instruct"
 
 
 def _read_int_env(name, default_value):

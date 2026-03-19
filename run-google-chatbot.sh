@@ -12,6 +12,8 @@ export CHATBOT_MODEL="gemini-3-flash-preview"
 export CHATBOT_TIMEOUT_SECONDS="300"
 export CHATBOT_MAX_TOKENS="2048"
 export CHATBOT_MAX_IMAGE_BYTES="10485760"
+export ML_BACKEND_URL="http://host.docker.internal:8001/detect"
+export AGENT_MAX_TOOL_STEPS="4"
 # Set to "true" to log both the grounded first agent call and the post-tool follow-up call.
 export AGENT_INPUT_LOGGING="false"
 
