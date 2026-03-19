@@ -30,6 +30,7 @@ class ChatbotConfig:
     max_tokens: int
     max_prompt_chars: int
     max_image_bytes: int
+    ollama_think: str
 
 
 def load_chatbot_config():
@@ -43,6 +44,7 @@ def load_chatbot_config():
         max_tokens=max(32, _read_int_env("CHATBOT_MAX_TOKENS", 256)),
         max_prompt_chars=max(1, _read_int_env("CHATBOT_MAX_PROMPT_CHARS", 12000)),
         max_image_bytes=max(1024, _read_int_env("CHATBOT_MAX_IMAGE_BYTES", 5 * 1024 * 1024)),
+        ollama_think=(os.environ.get("CHATBOT_OLLAMA_THINK", "false").strip()),
     )
 
 
@@ -114,6 +116,16 @@ class ChatbotProxyService:
                 headers["Authorization"] = f"Bearer {self.config.api_key}"
         return headers
 
+    def _normalized_ollama_think(self):
+        value = (self.config.ollama_think or "").strip().lower()
+        if not value:
+            return False
+        if value in {"1", "true", "yes", "on"}:
+            return True
+        if value in {"0", "false", "no", "off"}:
+            return False
+        return self.config.ollama_think.strip()
+
     def _build_request(self, messages):
         if self.config.provider == "openai":
             input_items = []
@@ -176,6 +188,7 @@ class ChatbotProxyService:
             "model": self.config.model_id,
             "messages": ollama_messages,
             "stream": False,
+            "think": self._normalized_ollama_think(),
             "options": {
                 "num_predict": self.config.max_tokens,
                 "temperature": 0.2,
@@ -205,7 +218,10 @@ class ChatbotProxyService:
             return "\n".join(texts).strip()
 
         message = data.get("message") or {}
-        return (message.get("content") or "").strip()
+        content = (message.get("content") or "").strip()
+        if content:
+            return content
+        return (message.get("thinking") or "").strip()
 
     def _normalize_messages(self, messages):
         normalized = []
