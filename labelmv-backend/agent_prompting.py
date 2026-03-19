@@ -43,6 +43,19 @@ def serialize_boxes_for_prompt(boxes):
     return items
 
 
+def build_turn_user_message(user_text, selected_box=None):
+    normalized_text = (user_text or '').strip()
+    if selected_box is None:
+        return normalized_text
+    payload = {
+        'selected_box_from_current_frame': selected_box,
+    }
+    return (
+        f"Current Turn Context JSON:\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n\n"
+        f"User Query:\n{normalized_text}"
+    )
+
+
 def build_contextual_chat_prompt(user_text, project, image_relationship_text=None,
                                  boxes_for_current_frame=None, target_box=None):
     payload = {
@@ -65,11 +78,23 @@ def build_contextual_chat_prompt(user_text, project, image_relationship_text=Non
         image_order += "- Target frame: Image 1\n"
 
     action_instructions = (
-        "If the user asks you to create a new annotation box, append exactly one final line beginning with "
-        "ACTION_JSON: followed by compact JSON on the same line. "
+        "If the user asks you to create a new annotation box or adjust an existing box, append exactly one final "
+        "line beginning with ACTION_JSON: followed by compact JSON on the same line. "
         "For the supported create action, use this schema: "
         "{\"action\":\"create_box\",\"target_frame\":\"current|target\",\"className\":\"<project class>\","
         "\"bbox_1000\":[x1,y1,x2,y2]}. "
+        "For the supported geometry update action, use this schema: "
+        "{\"action\":\"update_box_geometry\",\"target_frame\":\"current|target\",\"box_id\":\"<existing box id>\","
+        "\"bbox_1000\":[x1,y1,x2,y2]}. "
+        "For the supported class update action, use this schema: "
+        "{\"action\":\"update_box_class\",\"target_frame\":\"current|target\",\"box_id\":\"<existing box id>\","
+        "\"className\":\"<project class>\"}. "
+        "For the supported attribute update action, use this schema: "
+        "{\"action\":\"update_box_attributes\",\"target_frame\":\"current|target\",\"box_id\":\"<existing box id>\","
+        "\"attributes\":{\"<attribute name>\":\"<attribute code or empty string>\"}}. "
+        "For the supported object identity update action, use this schema: "
+        "{\"action\":\"update_box_object_id\",\"target_frame\":\"current|target\",\"box_id\":\"<existing box id>\","
+        "\"objectId\":<non-negative integer>}. "
         "Use bbox_1000 integers in [0,1000]. Use target_frame=\"target\" only when a target frame is available. "
         "Do not include objectId or attributes for create_box; the backend will set defaults."
     )

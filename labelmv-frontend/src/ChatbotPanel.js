@@ -86,11 +86,10 @@ const ChatbotPanel = ({
   const activeSourceSampleIndex = sessionContext ? sessionContext.sourceSampleIndex : currentSampleIndex;
   const activeCurrentBoxes = sessionContext ? sessionContext.currentBoxes : currentBoxes;
   const activeTargetScope = sessionContext ? sessionContext.targetScope : targetScope;
-  const activeTargetBoxId = sessionContext ? sessionContext.targetBoxId : targetBoxId;
+  const activeTargetBoxId = targetBoxId;
   const sourceVideoLabel = viewLabels[activeSourceVideoIndex] || `View ${activeSourceVideoIndex + 1}`;
   const targetBoxOptions = [
     { value: 'none', label: 'None' },
-    { value: 'all', label: 'All' },
     ...activeCurrentBoxes.map((box, index) => ({
       value: String(box.id),
       label: `Box ${index + 1}${box.className ? ` • ${box.className}` : ''}${box.objectId != null && box.objectId !== 0 ? ` • ID ${box.objectId}` : ''}`,
@@ -131,9 +130,7 @@ const ChatbotPanel = ({
     targetSummary = `Target ${targetVideoLabel} frame ${targetSampleIndex}`;
   }
   let targetBoxSummary = 'No selected box from current frame';
-  if (activeTargetBoxId === 'all') {
-    targetBoxSummary = 'All current-frame annotations';
-  } else if (activeTargetBoxId !== 'none') {
+  if (activeTargetBoxId !== 'none') {
     targetBoxSummary = `Selected box ${activeTargetBoxId} from current frame`;
   }
 
@@ -155,6 +152,38 @@ const ChatbotPanel = ({
     setMessages((current) => current.map((message) => (
       message.id === messageId ? { ...message, ...updates } : message
     )));
+  };
+
+  const applyActionToSessionBoxes = (baseBoxes, actionPayload, actionResult) => {
+    if (!actionResult?.success || !actionPayload?.box) {
+      return baseBoxes;
+    }
+
+    if (actionPayload.target_frame !== 'current') {
+      return baseBoxes;
+    }
+
+    if (actionPayload.action === 'create_box') {
+      return [...baseBoxes, actionPayload.box];
+    }
+
+    if (actionPayload.action === 'update_box_geometry') {
+      return baseBoxes.map((box) => (
+        String(box.id) === String(actionPayload.box.id) ? actionPayload.box : box
+      ));
+    }
+
+    if (
+      actionPayload.action === 'update_box_class' ||
+      actionPayload.action === 'update_box_attributes' ||
+      actionPayload.action === 'update_box_object_id'
+    ) {
+      return baseBoxes.map((box) => (
+        String(box.id) === String(actionPayload.box.id) ? actionPayload.box : box
+      ));
+    }
+
+    return baseBoxes;
   };
 
   const handleSubmit = async (event) => {
@@ -247,14 +276,11 @@ const ChatbotPanel = ({
         throw new Error('Chatbot response ended without a final result.');
       }
 
-      const nextSessionCurrentBoxes = (
-        finalPayload.actionResult?.success &&
-        finalPayload.action?.action === 'create_box' &&
-        finalPayload.action?.target_frame === 'current' &&
-        finalPayload.action?.box
-      )
-        ? [...(sessionContext ? sessionContext.currentBoxes : currentBoxes), finalPayload.action.box]
-        : (sessionContext ? sessionContext.currentBoxes : currentBoxes);
+      const nextSessionCurrentBoxes = applyActionToSessionBoxes(
+        sessionContext ? sessionContext.currentBoxes : currentBoxes,
+        finalPayload.action,
+        finalPayload.actionResult,
+      );
 
       updateMessageById(pendingAssistantId, {
         text: finalPayload.reply || '',
@@ -279,7 +305,6 @@ const ChatbotPanel = ({
           targetScope,
           targetVideoIndex,
           targetSampleIndex,
-          targetBoxId,
           currentBoxes: nextSessionCurrentBoxes,
         });
       } else if (nextSessionCurrentBoxes !== sessionContext.currentBoxes) {
@@ -347,7 +372,6 @@ const ChatbotPanel = ({
           id="annotation-chatbot-target-box"
           value={activeTargetBoxId}
           onChange={(event) => setTargetBoxId(event.target.value)}
-          disabled={!!sessionContext}
         >
           {targetBoxOptions.map((option) => (
             <option key={option.value} value={option.value}>

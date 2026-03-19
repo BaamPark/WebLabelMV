@@ -118,7 +118,8 @@ class ChatbotProxyService:
         if self.config.provider == "openai":
             input_items = []
             for message in messages:
-                content = [{"type": "input_text", "text": message["content"]}]
+                text_type = "output_text" if message["role"] == "assistant" else "input_text"
+                content = [{"type": text_type, "text": message["content"]}]
                 for image in message.get("images") or []:
                     image_b64 = base64.b64encode(image["bytes"]).decode("utf-8")
                     content.append({
