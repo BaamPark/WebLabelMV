@@ -42,16 +42,18 @@ This repository includes a Docker setup that packages the frontend, backend, and
   
   - `MONGO_URI=mongodb://mongo:27017/labelmv` (set in compose for the backend)
 
-- Chatbot proxy and local HF model server:
+- Chatbot backend:
   
-  - `CHATBOT_PROVIDER=hf_server`
-  - `CHATBOT_BASE_URL=http://host.docker.internal:8000`
-  - `CHATBOT_REQUEST_PATH=/generate`
-  - `CHATBOT_API_KEY=` (optional)
-  - `CHATBOT_MODEL=Qwen/Qwen3-VL-2B-Instruct`
+  - `CHATBOT_PROVIDER=ollama|google_genai|openai`
+  - `CHATBOT_BASE_URL=...`
+  - `CHATBOT_REQUEST_PATH=...`
+  - `CHATBOT_API_KEY=` (for cloud providers)
+  - `CHATBOT_MODEL=...`
+  - `CHATBOT_OLLAMA_THINK=false` (Ollama only)
   - `CHATBOT_TIMEOUT_SECONDS=180`
-  - `CHATBOT_MAX_TOKENS=1024`
-  - `CHATBOT_MAX_IMAGE_BYTES=10485760`
+  - `CHATBOT_MAX_TOKENS=256`
+  - `CHATBOT_MAX_IMAGE_BYTES=5242880`
+  - `AGENT_INPUT_LOGGING=false`
 
 ### 4) Stop and clean
 
@@ -79,75 +81,27 @@ You can still run each part locally outside Docker:
 
 ## Multimodal Chatbot
 
-This milestone adds only a user-facing multimodal chatbot. It does not add agentic auto-annotation or gating.
+The app backend supports:
 
-### Setup
+- `ollama`
+- `google_genai`
+- `openai`
 
-- The app backend now calls a separate model server by `base_url`.
-- The HF model server runs on the host machine, not in Docker.
-- Default local model server:
-  
-  - `Qwen/Qwen3-VL-2B-Instruct`
+Start the app stack with one of the launcher scripts:
 
-- Start the host model server first:
-  
-  - `./hf-model-server/start_local_hf_model.sh`
+- `./run-ollama-chatbot.sh -d`
+- `./run-google-chatbot.sh -d`
+- `./run-openai-chatbot.sh -d`
 
-- Then start the app stack:
-  
-  - `./run-local-chatbot.sh -d`
+Then sign in, open a project, and use the floating `Ask AI` button on the annotation page.
 
-- Sign in, open a project, and use the floating `Ask AI` button on the annotation page.
+The frontend sends chat requests to:
 
-### How it works
+- `POST /api/chatbot`
 
-- Frontend sends `multipart/form-data` with:
-  
-  - `text`: prompt text
-  - `image`: optional single uploaded image
+The backend forwards those requests to:
 
-- App backend route:
-  
-  - `POST /api/chatbot`
-
-- App backend forwards that request to:
-  
-  - `${CHATBOT_BASE_URL}${CHATBOT_REQUEST_PATH}`
-
-- Supported backend providers in the app proxy:
-  
-  - `hf_server` for the included host-run Hugging Face `transformers` server
-  - `ollama` for Ollama's native HTTP API
-
-- Default local model server route:
-  
-  - `POST http://localhost:8000/generate`
-
-- Default model server:
-  
-  - `Qwen/Qwen3-VL-2B-Instruct`
-
-- The local model server uses `transformers` directly. The Qwen model card currently advises installing the latest `transformers` from source for Qwen3-VL support:
-  
-  - https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct
-  - https://huggingface.co/docs/transformers/model_doc/qwen3_vl
-
-- To point the app at Ollama later, change only the app-side settings:
-  
-  - `CHATBOT_PROVIDER=ollama`
-  - `CHATBOT_BASE_URL=http://host.docker.internal:11434`
-  - `CHATBOT_REQUEST_PATH=/api/generate`
-  - `CHATBOT_MODEL=<your-ollama-vision-model>`
-
-- Helper scripts for Ollama:
-  
-  - `./start-ollama-model.sh`
-  - `./run-ollama-chatbot.sh -d`
-
-- Ollama API reference used for compatibility:
-  
-  - https://docs.ollama.com/api/introduction
-  - https://docs.ollama.com/api/generate
+- `${CHATBOT_BASE_URL}${CHATBOT_REQUEST_PATH}`
 
 ### Quick test example
 
@@ -160,30 +114,6 @@ curl -X POST http://localhost:56250/api/chatbot \
   -F "image=@/absolute/path/to/example.jpg"
 ```
 
-Directly against the host model server:
-
-```bash
-python - <<'PY'
-import base64
-import json
-from pathlib import Path
-import requests
-
-image_path = Path("/absolute/path/to/example.jpg")
-payload = {
-    "model": "Qwen/Qwen3-VL-2B-Instruct",
-    "text": "Describe the important objects in this image.",
-    "image_base64": base64.b64encode(image_path.read_bytes()).decode("utf-8"),
-    "image_name": image_path.name,
-    "max_new_tokens": 256,
-}
-
-response = requests.post("http://localhost:8000/generate", json=payload, timeout=300)
-print(response.status_code)
-print(json.dumps(response.json(), indent=2))
-PY
-```
-
 ## Files of interest
 
 - `docker-compose.yml` – Orchestrates `frontend`, `backend`, and `mongo` services.
@@ -191,7 +121,6 @@ PY
 - `labelmv-frontend/Dockerfile` – React build + Nginx runtime.
 - `labelmv-frontend/nginx.conf` – Proxies API and `/videos` to backend.
 - `labelmv-backend/app.py` – Reads `MONGO_URI` and `SECRET_KEY` from env.
-- `hf-model-server/app.py` – Host-run local Hugging Face model server.
-- `hf-model-server/start_local_hf_model.sh` – Host startup script for the local model server.
-- `start-ollama-model.sh` – Host helper to start Ollama and pull a vision model.
 - `run-ollama-chatbot.sh` – App stack launcher configured for Ollama.
+- `run-google-chatbot.sh` – App stack launcher configured for Google GenAI.
+- `run-openai-chatbot.sh` – App stack launcher configured for OpenAI.
