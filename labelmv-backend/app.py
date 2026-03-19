@@ -1,5 +1,5 @@
 
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, stream_with_context
 from flask import send_file
 from flask_cors import CORS
 import os
@@ -16,9 +16,11 @@ import io
 
 from agent_prompting import (
     build_contextual_chat_prompt,
+    extract_action_json,
     log_agent_messages,
     select_box_subset,
     serialize_boxes_for_prompt,
+    strip_action_json,
 )
 from chatbot_service import ChatbotProxyService, load_chatbot_config, ChatbotServiceError
 
@@ -92,6 +94,184 @@ def _sanitize_attribute_descriptions(raw_descriptions, attributes):
     return descriptions
 
 
+def _is_valid_box_id(value):
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, (str, int, float))
+
+
+def _coerce_box_number(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    return None
+
+
+def _box_to_agent_coords(box):
+    left = float(box.get('left', 0))
+    top = float(box.get('top', 0))
+    width = float(box.get('width', 0))
+    height = float(box.get('height', 0))
+    x1 = round(left * 1000, 3)
+    y1 = round(top * 1000, 3)
+    x2 = round((left + width) * 1000, 3)
+    y2 = round((top + height) * 1000, 3)
+    return x1, y1, x2, y2
+
+
+def _agent_bbox_to_backend_box(bbox_1000):
+    if not isinstance(bbox_1000, list) or len(bbox_1000) != 4:
+        return None, "bbox_1000 must be an array of four numbers: [x1, y1, x2, y2]"
+
+    coords = []
+    for value in bbox_1000:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            return None, "bbox_1000 must contain only finite numbers"
+        coords.append(float(value))
+
+    x1, y1, x2, y2 = coords
+    if x1 < 0 or y1 < 0:
+        return None, f"x1,y1 value ({x1}, {y1}) exceeds the frame range; agent bbox coordinates must stay within [0, 1000]"
+    if x2 > 1000:
+        return None, f"x2 value {x2} exceeds the frame width; agent bbox coordinates must stay within [0, 1000]"
+    if y2 > 1000:
+        return None, f"y2 value {y2} exceeds the frame height; agent bbox coordinates must stay within [0, 1000]"
+    if x2 <= x1:
+        return None, (
+            f"x2 must be greater than x1 and remain inside the frame; "
+            f"current bbox is [x1, y1, x2, y2] = [{x1}, {y1}, {x2}, {y2}]"
+        )
+    if y2 <= y1:
+        return None, (
+            f"y2 must be greater than y1 and remain inside the frame; "
+            f"current bbox is [x1, y1, x2, y2] = [{x1}, {y1}, {x2}, {y2}]"
+        )
+
+    return {
+        'left': x1 / 1000.0,
+        'top': y1 / 1000.0,
+        'width': (x2 - x1) / 1000.0,
+        'height': (y2 - y1) / 1000.0,
+    }, None
+
+
+def _normalize_and_validate_boxes(boxes, project):
+    project_classes = [item for item in (project.get('classes') or []) if isinstance(item, str)]
+    project_attributes = project.get('attributes') or {}
+    normalized_boxes = []
+
+    for index, box in enumerate(boxes):
+        if not isinstance(box, dict):
+            return None, f"Invalid box at index {index}: each box must be a JSON object"
+
+        box_id = box.get('id')
+        if not _is_valid_box_id(box_id):
+            return None, f"Invalid box at index {index}: id is required and must be a string or number"
+
+        left = _coerce_box_number(box.get('left'))
+        top = _coerce_box_number(box.get('top'))
+        width = _coerce_box_number(box.get('width'))
+        height = _coerce_box_number(box.get('height'))
+        if left is None or top is None or width is None or height is None:
+            return None, (
+                f"Invalid box at index {index}: bbox must define finite backend coordinates "
+                f"(left, top, width, height) so it can be converted to agent coordinates [x1, y1, x2, y2]"
+            )
+        x1, y1, x2, y2 = _box_to_agent_coords({
+            'left': left,
+            'top': top,
+            'width': width,
+            'height': height,
+        })
+        if left < 0 or left > 1:
+            return None, (
+                f"Invalid box at index {index}: x1,y1 value ({x1}, {y1}) exceeds the frame range; "
+                f"agent bbox coordinates must stay within [0, 1000]"
+            )
+        if top < 0 or top > 1:
+            return None, (
+                f"Invalid box at index {index}: x1,y1 value ({x1}, {y1}) exceeds the frame range; "
+                f"agent bbox coordinates must stay within [0, 1000]"
+            )
+        if width <= 0 or width > 1:
+            return None, (
+                f"Invalid box at index {index}: x2 must be greater than x1 and remain inside the frame; "
+                f"current bbox maps to [x1, y1, x2, y2] = [{x1}, {y1}, {x2}, {y2}]"
+            )
+        if height <= 0 or height > 1:
+            return None, (
+                f"Invalid box at index {index}: y2 must be greater than y1 and remain inside the frame; "
+                f"current bbox maps to [x1, y1, x2, y2] = [{x1}, {y1}, {x2}, {y2}]"
+            )
+        if left + width > 1:
+            return None, (
+                f"Invalid box at index {index}: x2 value {x2} exceeds the frame width; "
+                f"agent bbox coordinates must stay within [0, 1000]"
+            )
+        if top + height > 1:
+            return None, (
+                f"Invalid box at index {index}: y2 value {y2} exceeds the frame height; "
+                f"agent bbox coordinates must stay within [0, 1000]"
+            )
+
+        class_name = box.get('className')
+        if not isinstance(class_name, str) or not class_name.strip():
+            return None, f"Invalid box at index {index}: className is required"
+        class_name = class_name.strip()
+        if project_classes and class_name not in project_classes:
+            return None, f"Invalid box at index {index}: className '{class_name}' is not in project classes"
+
+        object_id_raw = box.get('objectId', 0)
+        try:
+            object_id = int(object_id_raw)
+        except (TypeError, ValueError):
+            return None, f"Invalid box at index {index}: objectId must be an integer"
+        if object_id < 0:
+            return None, f"Invalid box at index {index}: objectId must be greater than or equal to 0"
+
+        raw_attributes = box.get('attributes')
+        if raw_attributes is None:
+            raw_attributes = {}
+        if not isinstance(raw_attributes, dict):
+            return None, f"Invalid box at index {index}: attributes must be a JSON object"
+
+        unknown_attrs = sorted(key for key in raw_attributes.keys() if key not in project_attributes)
+        if unknown_attrs:
+            return None, (
+                f"Invalid box at index {index}: unknown attribute name(s): "
+                + ", ".join(repr(name) for name in unknown_attrs)
+            )
+
+        normalized_attributes = {}
+        for attr_name, valid_values in project_attributes.items():
+            raw_value = raw_attributes.get(attr_name, '')
+            if raw_value is None:
+                raw_value = ''
+            if not isinstance(raw_value, str):
+                return None, f"Invalid box at index {index}: attribute '{attr_name}' must be a string"
+            if raw_value and raw_value not in valid_values:
+                return None, (
+                    f"Invalid box at index {index}: attribute '{attr_name}' has unsupported value "
+                    f"'{raw_value}'"
+                )
+            normalized_attributes[attr_name] = raw_value
+
+        normalized_boxes.append({
+            'id': box_id,
+            'left': left,
+            'top': top,
+            'width': width,
+            'height': height,
+            'className': class_name,
+            'objectId': object_id,
+            'attributes': normalized_attributes,
+        })
+
+    return normalized_boxes, None
+
+
 def _get_owned_project(current_user, project_id):
     pid_key = _coerce_project_id(project_id)
     if pid_key is None:
@@ -111,6 +291,176 @@ def _get_annotation_boxes_for(user_id, project_id, video_index, sample_index):
     })
     boxes = doc.get('boxes') if doc else []
     return boxes if isinstance(boxes, list) else []
+
+
+def _upsert_frame_annotations(user_id, project_id, video_index, sample_index, boxes):
+    mongo.db.annotations.update_one(
+        {
+            'user_id': str(user_id),
+            'project_id': str(project_id),
+            'video_index': int(video_index),
+            'sample_index': int(sample_index),
+        },
+        {
+            '$set': {
+                'boxes': boxes,
+                'updated_at': datetime.datetime.utcnow(),
+            },
+            '$setOnInsert': {
+                'created_at': datetime.datetime.utcnow(),
+            }
+        },
+        upsert=True
+    )
+
+
+def _generate_box_id(existing_boxes):
+    candidate = int(datetime.datetime.utcnow().timestamp() * 1000)
+    existing_ids = {str(box.get('id')) for box in existing_boxes or []}
+    while str(candidate) in existing_ids:
+        candidate += 1
+    return candidate
+
+
+def _resolve_action_target(action_target_frame, source_video_index, source_sample_index,
+                           target_scope, target_video_index, target_sample_index):
+    if action_target_frame == 'target':
+        if target_scope == 'none' or target_video_index is None or target_sample_index is None:
+            return None, "target_frame='target' was requested, but no target frame is available in this chat session"
+        return {
+            'video_index': int(target_video_index),
+            'sample_index': int(target_sample_index),
+            'label': 'target frame',
+        }, None
+
+    return {
+        'video_index': int(source_video_index),
+        'sample_index': int(source_sample_index),
+        'label': 'current frame',
+    }, None
+
+
+def _execute_agent_action(action_payload, project, current_user, source_video_index, source_sample_index,
+                          target_scope, target_video_index, target_sample_index):
+    if not isinstance(action_payload, dict):
+        return None, None
+
+    action_name = (action_payload.get('action') or '').strip()
+    if not action_name:
+        return None, None
+
+    if action_name != 'create_box':
+        return None, {
+            'success': False,
+            'message': f"Unsupported action '{action_name}'",
+        }
+
+    target_frame = (action_payload.get('target_frame') or 'current').strip().lower()
+    if target_frame not in {'current', 'target'}:
+        return None, {
+            'success': False,
+            'message': "create_box requires target_frame to be either 'current' or 'target'",
+        }
+
+    class_name = action_payload.get('className')
+    if not isinstance(class_name, str) or not class_name.strip():
+        return None, {
+            'success': False,
+            'message': "create_box requires className",
+        }
+    class_name = class_name.strip()
+
+    if class_name not in (project.get('classes') or []):
+        return None, {
+            'success': False,
+            'message': f"create_box className '{class_name}' is not in project classes",
+        }
+
+    bbox_backend, bbox_error = _agent_bbox_to_backend_box(action_payload.get('bbox_1000'))
+    if bbox_error:
+        return None, {
+            'success': False,
+            'message': bbox_error,
+        }
+
+    frame_target, target_error = _resolve_action_target(
+        target_frame,
+        source_video_index,
+        source_sample_index,
+        target_scope,
+        target_video_index,
+        target_sample_index,
+    )
+    if target_error:
+        return None, {
+            'success': False,
+            'message': target_error,
+        }
+
+    existing_boxes = _get_annotation_boxes_for(
+        current_user['_id'],
+        project['_id'],
+        frame_target['video_index'],
+        frame_target['sample_index'],
+    )
+    new_box = {
+        'id': _generate_box_id(existing_boxes),
+        'left': bbox_backend['left'],
+        'top': bbox_backend['top'],
+        'width': bbox_backend['width'],
+        'height': bbox_backend['height'],
+        'className': class_name,
+        'objectId': 0,
+        'attributes': {name: '' for name in (project.get('attributes') or {}).keys()},
+    }
+    next_boxes = [*existing_boxes, new_box]
+    normalized_boxes, validation_error = _normalize_and_validate_boxes(next_boxes, project)
+    if validation_error:
+        return None, {
+            'success': False,
+            'message': validation_error,
+        }
+
+    _upsert_frame_annotations(
+        current_user['_id'],
+        project['_id'],
+        frame_target['video_index'],
+        frame_target['sample_index'],
+        normalized_boxes,
+    )
+
+    return {
+        'action': 'create_box',
+        'target_frame': target_frame,
+        'video_index': frame_target['video_index'],
+        'sample_index': frame_target['sample_index'],
+        'box': new_box,
+    }, {
+        'success': True,
+        'message': (
+            f"Created a new {class_name} box in the {frame_target['label']} "
+            f"(video_index={frame_target['video_index']}, sample_index={frame_target['sample_index']})"
+        ),
+        'action': 'create_box',
+        'video_index': frame_target['video_index'],
+        'sample_index': frame_target['sample_index'],
+        'box_id': new_box['id'],
+    }
+
+
+def _build_tool_result_message(action_payload, action_result):
+    action_name = None
+    if isinstance(action_payload, dict):
+        action_name = action_payload.get('action')
+
+    return json.dumps({
+        'tool_name': action_name,
+        'tool_result': action_result,
+        'instruction': (
+            'Use this tool result to answer the user. '
+            'Do not emit ACTION_JSON in your next response.'
+        ),
+    }, ensure_ascii=False)
 
 
 def _read_frame_bytes(project, video_index, sample_index):
@@ -425,19 +775,93 @@ def chatbot(current_user):
         ollama_messages,
     )
 
-    try:
-        reply = chatbot_service.generate_reply(
-            messages=ollama_messages,
-        )
-    except ChatbotServiceError as error:
-        return jsonify({"error": error.message}), error.status_code
+    @stream_with_context
+    def generate_events():
+        yield json.dumps({
+            "type": "status",
+            "message": "Waiting for response",
+        }) + "\n"
 
-    return jsonify({
-        "reply": reply,
-        "model": chatbot_config.model_id,
-        "provider": chatbot_config.provider,
-        "baseUrl": chatbot_config.base_url,
-    })
+        try:
+            reply = chatbot_service.generate_reply(
+                messages=ollama_messages,
+            )
+        except ChatbotServiceError as error:
+            yield json.dumps({
+                "type": "error",
+                "error": error.message,
+                "status_code": error.status_code,
+            }) + "\n"
+            return
+
+        action_payload = extract_action_json(reply)
+        executed_action = None
+        action_result = None
+        final_reply = reply
+
+        if project_id and action_payload:
+            yield json.dumps({
+                "type": "status",
+                "message": "Executing tools",
+            }) + "\n"
+
+            executed_action, action_result = _execute_agent_action(
+                action_payload,
+                project,
+                current_user,
+                source_video_index,
+                source_sample_index,
+                target_scope,
+                target_video_index,
+                target_sample_index,
+            )
+            followup_messages = [
+                *ollama_messages,
+                {
+                    'role': 'assistant',
+                    'content': reply,
+                },
+                {
+                    'role': 'user',
+                    'content': _build_tool_result_message(action_payload, action_result),
+                },
+            ]
+
+            yield json.dumps({
+                "type": "status",
+                "message": "Waiting for response",
+            }) + "\n"
+
+            try:
+                final_reply = chatbot_service.generate_reply(
+                    messages=followup_messages,
+                )
+            except ChatbotServiceError as error:
+                yield json.dumps({
+                    "type": "error",
+                    "error": error.message,
+                    "status_code": error.status_code,
+                }) + "\n"
+                return
+
+        yield json.dumps({
+            "type": "result",
+            "reply": strip_action_json(final_reply),
+            "model": chatbot_config.model_id,
+            "provider": chatbot_config.provider,
+            "baseUrl": chatbot_config.base_url,
+            "action": executed_action,
+            "actionResult": action_result,
+        }) + "\n"
+
+    return Response(
+        generate_events(),
+        mimetype='application/x-ndjson',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+        },
+    )
 
 # -------- Project + Frame APIs --------
 
@@ -995,27 +1419,28 @@ def save_frame_annotations(current_user, project_id):
     boxes = request.get_json(silent=True)
     if boxes is None or not isinstance(boxes, list):
         return jsonify({"error": "Body must be a JSON array of boxes"}), 400
+    normalized_boxes, validation_error = _normalize_and_validate_boxes(boxes, project)
+    if validation_error:
+        return jsonify({"error": validation_error}), 400
 
-    mongo.db.annotations.update_one(
-        {
-            'user_id': str(current_user['_id']),
-            'project_id': str(project['_id']),
-            'video_index': int(video_index),
-            'sample_index': int(sample_index),
-        },
-        {
-            '$set': {
-                'boxes': boxes,
-                'updated_at': datetime.datetime.utcnow(),
-            },
-            '$setOnInsert': {
-                'created_at': datetime.datetime.utcnow(),
-            }
-        },
-        upsert=True
+    _upsert_frame_annotations(
+        current_user['_id'],
+        project['_id'],
+        video_index,
+        sample_index,
+        normalized_boxes,
     )
 
-    return jsonify({"success": True})
+    return jsonify({
+        "success": True,
+        "message": (
+            f"Saved {len(normalized_boxes)} box(es) for video_index={int(video_index)} "
+            f"sample_index={int(sample_index)}"
+        ),
+        "video_index": int(video_index),
+        "sample_index": int(sample_index),
+        "boxes_saved": len(normalized_boxes),
+    })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=56250, debug=True)

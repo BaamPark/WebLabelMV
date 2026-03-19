@@ -324,6 +324,12 @@ const AnnotationPage = () => {
     }
   };
 
+  const handleChatActionApplied = async ({ videoIndex, sampleIndex: actionSampleIndex }) => {
+    if (videoIndex === selectedVideoIndex && actionSampleIndex === sampleIndex) {
+      await fetchAnnotations(videoIndex, actionSampleIndex);
+    }
+  };
+
   const handleExport = async () => {
     if (!projectId) return;
     try {
@@ -746,6 +752,7 @@ const AnnotationPage = () => {
       <ChatbotPanel
         authToken={authToken}
         onClose={() => setIsChatOpen(false)}
+        onActionApplied={handleChatActionApplied}
         isOpen={isChatOpen}
         projectId={projectId}
         currentVideoIndex={selectedVideoIndex}

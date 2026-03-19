@@ -7,9 +7,59 @@ const shortenLabel = (text, maxLength = 28) => {
   return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
 };
 
+const formatErrorMessage = (value, fallback) => {
+  if (!value) return fallback;
+  if (typeof value === 'string') return value;
+  if (value instanceof Error) return value.message || fallback;
+  if (typeof value === 'object') {
+    if (typeof value.error === 'string') return value.error;
+    if (typeof value.message === 'string') return value.message;
+    try {
+      return JSON.stringify(value);
+    } catch (_error) {
+      return fallback;
+    }
+  }
+  return String(value);
+};
+
+const readNdjsonStream = async (response, onEvent) => {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error('Streaming response is not supported in this browser.');
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+
+    let newlineIndex = buffer.indexOf('\n');
+    while (newlineIndex >= 0) {
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (line) {
+        onEvent(JSON.parse(line));
+      }
+      newlineIndex = buffer.indexOf('\n');
+    }
+
+    if (done) {
+      const finalLine = buffer.trim();
+      if (finalLine) {
+        onEvent(JSON.parse(finalLine));
+      }
+      break;
+    }
+  }
+};
+
 const ChatbotPanel = ({
   authToken,
   onClose,
+  onActionApplied,
   isOpen = false,
   projectId = '',
   currentVideoIndex = 0,
@@ -101,6 +151,12 @@ const ChatbotPanel = ({
     setSessionContext(null);
   };
 
+  const updateMessageById = (messageId, updates) => {
+    setMessages((current) => current.map((message) => (
+      message.id === messageId ? { ...message, ...updates } : message
+    )));
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
 
@@ -117,14 +173,22 @@ const ChatbotPanel = ({
         text: message.text,
       }));
 
+    const userMessageId = Date.now();
+    const pendingAssistantId = userMessageId + 1;
     setMessages((current) => [
       ...current,
       {
-        id: Date.now(),
+        id: userMessageId,
         role: 'user',
         text: trimmedPrompt,
         meta: `Source ${sourceVideoLabel} • frame ${activeSourceSampleIndex} • ${targetSummary} • ${targetBoxSummary}${selectedBoxId != null ? ` • UI Selected Box ${selectedBoxId}` : ''}`,
-      }
+      },
+      {
+        id: pendingAssistantId,
+        role: 'assistant',
+        text: 'Waiting for response',
+        meta: '',
+      },
     ]);
     setIsLoading(true);
     setError('');
@@ -157,20 +221,57 @@ const ChatbotPanel = ({
         body: formData,
       });
 
-      const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(payload.error || `Request failed with status ${response.status}`);
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(formatErrorMessage(payload.error || payload, `Request failed with status ${response.status}`));
+      }
+      let finalPayload = null;
+      await readNdjsonStream(response, (eventPayload) => {
+        if (!eventPayload || typeof eventPayload !== 'object') return;
+        if (eventPayload.type === 'status') {
+          updateMessageById(pendingAssistantId, {
+            text: eventPayload.message || 'Waiting for response',
+            meta: '',
+          });
+          return;
+        }
+        if (eventPayload.type === 'error') {
+          throw new Error(formatErrorMessage(eventPayload.error || eventPayload, 'Failed to contact chatbot.'));
+        }
+        if (eventPayload.type === 'result') {
+          finalPayload = eventPayload;
+        }
+      });
+
+      if (!finalPayload) {
+        throw new Error('Chatbot response ended without a final result.');
       }
 
-      setMessages((current) => [
-        ...current,
-        {
-          id: Date.now() + 1,
-          role: 'assistant',
-          text: payload.reply || '',
-          meta: [payload.provider, payload.model].filter(Boolean).join(' • '),
-        },
-      ]);
+      const nextSessionCurrentBoxes = (
+        finalPayload.actionResult?.success &&
+        finalPayload.action?.action === 'create_box' &&
+        finalPayload.action?.target_frame === 'current' &&
+        finalPayload.action?.box
+      )
+        ? [...(sessionContext ? sessionContext.currentBoxes : currentBoxes), finalPayload.action.box]
+        : (sessionContext ? sessionContext.currentBoxes : currentBoxes);
+
+      updateMessageById(pendingAssistantId, {
+        text: finalPayload.reply || '',
+        meta: [
+          [finalPayload.provider, finalPayload.model].filter(Boolean).join(' • '),
+          finalPayload.actionResult?.message || '',
+        ].filter(Boolean).join(' • '),
+      });
+
+      if (finalPayload.actionResult?.success && typeof onActionApplied === 'function') {
+        onActionApplied({
+          videoIndex: finalPayload.actionResult.video_index,
+          sampleIndex: finalPayload.actionResult.sample_index,
+          action: finalPayload.action,
+          actionResult: finalPayload.actionResult,
+        });
+      }
       if (!sessionContext) {
         setSessionContext({
           sourceVideoIndex: currentVideoIndex,
@@ -179,12 +280,18 @@ const ChatbotPanel = ({
           targetVideoIndex,
           targetSampleIndex,
           targetBoxId,
-          currentBoxes,
+          currentBoxes: nextSessionCurrentBoxes,
         });
+      } else if (nextSessionCurrentBoxes !== sessionContext.currentBoxes) {
+        setSessionContext((current) => ({
+          ...current,
+          currentBoxes: nextSessionCurrentBoxes,
+        }));
       }
       resetComposer();
     } catch (requestError) {
-      setError(requestError.message || 'Failed to contact chatbot.');
+      setMessages((current) => current.filter((message) => message.id !== pendingAssistantId));
+      setError(formatErrorMessage(requestError, 'Failed to contact chatbot.'));
     } finally {
       setIsLoading(false);
     }
@@ -218,12 +325,6 @@ const ChatbotPanel = ({
           </div>
         ))}
 
-        {isLoading && (
-          <div className="chatbot-message chatbot-message-assistant">
-            <div className="chatbot-message-role">Assistant</div>
-            <div className="chatbot-message-text">Thinking...</div>
-          </div>
-        )}
       </div>
 
       <form className="chatbot-panel-composer" onSubmit={handleSubmit}>
