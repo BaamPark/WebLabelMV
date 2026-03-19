@@ -18,6 +18,7 @@ const AnnotationPage = () => {
   const [frameStep, setFrameStep] = useState(1);
   const [frameUrl, setFrameUrl] = useState(null);
   const [imageNatural, setImageNatural] = useState({ w: 0, h: 0 });
+  const [layoutTick, setLayoutTick] = useState(0);
   const [viewportSize, setViewportSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [pendingIndex, setPendingIndex] = useState(null);
@@ -36,23 +37,44 @@ const AnnotationPage = () => {
   // Compute displayed image metrics within the container (with object-fit: contain)
   const getDisplayMetrics = () => {
     const container = containerRef.current;
-    if (!container || !imageRef.current || !imageNatural.w || !imageNatural.h) {
+    const image = imageRef.current;
+    if (!container || !image) {
       return { cw: 0, ch: 0, dispW: 0, dispH: 0, offX: 0, offY: 0 };
     }
-    const rect = container.getBoundingClientRect();
-    const cw = rect.width;
-    const ch = rect.height;
-    const iw = imageNatural.w;
-    const ih = imageNatural.h;
-    const aspect = iw / ih;
-    let dispW = cw;
-    let dispH = cw / aspect;
-    if (dispH > ch) {
-      dispH = ch;
-      dispW = ch * aspect;
+
+    const containerRect = container.getBoundingClientRect();
+    const imageRect = image.getBoundingClientRect();
+    const cw = containerRect.width;
+    const ch = containerRect.height;
+    const dispW = imageRect.width;
+    const dispH = imageRect.height;
+    let offX = imageRect.left - containerRect.left;
+    let offY = imageRect.top - containerRect.top;
+
+    // Fallback before the image is laid out.
+    if ((!dispW || !dispH) && imageNatural.w && imageNatural.h) {
+      const iw = imageNatural.w;
+      const ih = imageNatural.h;
+      const aspect = iw / ih;
+      let fallbackW = cw;
+      let fallbackH = cw / aspect;
+      if (fallbackH > ch) {
+        fallbackH = ch;
+        fallbackW = ch * aspect;
+      }
+      return {
+        cw,
+        ch,
+        dispW: fallbackW,
+        dispH: fallbackH,
+        offX: (cw - fallbackW) / 2,
+        offY: (ch - fallbackH) / 2,
+      };
     }
-    const offX = (cw - dispW) / 2;
-    const offY = (ch - dispH) / 2;
+
+    if (!Number.isFinite(offX)) offX = 0;
+    if (!Number.isFinite(offY)) offY = 0;
+
     return { cw, ch, dispW, dispH, offX, offY };
   };
 
@@ -100,12 +122,27 @@ const AnnotationPage = () => {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  useEffect(() => {
+    if (!frameUrl) return undefined;
+    let raf1 = 0;
+    let raf2 = 0;
+    raf1 = window.requestAnimationFrame(() => {
+      raf2 = window.requestAnimationFrame(() => {
+        setLayoutTick((value) => value + 1);
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(raf1);
+      window.cancelAnimationFrame(raf2);
+    };
+  }, [frameUrl]);
+
   // Save current frame's annotations
-  const saveAnnotations = async (videoIndex, sIndex) => {
+  const saveBoxesForFrame = async (videoIndex, sIndex, boxes) => {
     if (!projectId) return false;
     try {
       // ensure objectId defaults to 0 if not provided or invalid
-      const boxesToSave = (boundingBoxes || []).map(b => {
+      const boxesToSave = (boxes || []).map(b => {
         const n = parseInt(b.objectId, 10);
         return { ...b, objectId: Number.isFinite(n) ? n : 0 };
       });
@@ -123,6 +160,8 @@ const AnnotationPage = () => {
       return false;
     }
   };
+
+  const saveAnnotations = async (videoIndex, sIndex) => saveBoxesForFrame(videoIndex, sIndex, boundingBoxes);
 
   const fetchAnnotations = async (videoIndex, sIndex) => {
     if (!projectId) return;
@@ -399,9 +438,11 @@ const AnnotationPage = () => {
 
   const handleMouseUp = () => {
     if (isDrawing) {
+      const nextBoxes = boundingBoxes;
       setIsDrawing(false);
       // Automatically disable drawing mode after a box is drawn
       setIsDrawingEnabled(false);
+      saveBoxesForFrame(selectedVideoIndex, sampleIndex, nextBoxes);
     }
   };
 
@@ -446,8 +487,10 @@ const AnnotationPage = () => {
 
   const handleMouseUpForResize = () => {
     if (resizingBoxId) {
+      const nextBoxes = boundingBoxes;
       setResizingBoxId(null);
       setSelectedBoxId(null); // Unhighlight the box when done resizing
+      saveBoxesForFrame(selectedVideoIndex, sampleIndex, nextBoxes);
     }
   };
 
@@ -472,8 +515,10 @@ const AnnotationPage = () => {
 
   const handleBoxMouseUp = () => {
     if (draggingBoxId !== null) {
+      const nextBoxes = boundingBoxes;
       setDraggingBoxId(null);
       setSelectedBoxId(null); // Unhighlight the box when done dragging
+      saveBoxesForFrame(selectedVideoIndex, sampleIndex, nextBoxes);
     }
   };
 
@@ -530,10 +575,12 @@ const AnnotationPage = () => {
 
   // Handle delete box from list
   const handleDeleteBox = (boxId) => {
-    setBoundingBoxes(prev => prev.filter(box => box.id !== boxId));
+    const nextBoxes = boundingBoxes.filter(box => box.id !== boxId);
+    setBoundingBoxes(nextBoxes);
     if (selectedBoxId === boxId) {
       setSelectedBoxId(null); // Unselect the deleted box
     }
+    saveBoxesForFrame(selectedVideoIndex, sampleIndex, nextBoxes);
   };
 
   return (
@@ -599,10 +646,18 @@ const AnnotationPage = () => {
                 src={frameUrl}
                 alt="frame"
                 className="video-frame"
-                onLoad={(e) => setImageNatural({ w: e.target.naturalWidth, h: e.target.naturalHeight })}
+                onLoad={(e) => {
+                  setImageNatural({ w: e.target.naturalWidth, h: e.target.naturalHeight });
+                  window.requestAnimationFrame(() => {
+                    window.requestAnimationFrame(() => {
+                      setLayoutTick((value) => value + 1);
+                    });
+                  });
+                }}
               />
             )}
             {(() => {
+              void layoutTick;
               const { dispW, dispH, offX, offY } = getDisplayMetrics();
               return boundingBoxes.map(box => (
               <React.Fragment key={box.id}>
@@ -701,7 +756,9 @@ const AnnotationPage = () => {
                       value={box.className || (classes[0] || '')}
                       onChange={(e) => {
                         const v = e.target.value;
-                        setBoundingBoxes(prev => prev.map(b => b.id === box.id ? { ...b, className: v } : b));
+                        const nextBoxes = boundingBoxes.map(b => b.id === box.id ? { ...b, className: v } : b);
+                        setBoundingBoxes(nextBoxes);
+                        saveBoxesForFrame(selectedVideoIndex, sampleIndex, nextBoxes);
                       }}
                     >
                       {(classes.length ? classes : ['']).map((c, i) => (
@@ -716,7 +773,11 @@ const AnnotationPage = () => {
                       onChange={(e) => {
                         const raw = e.target.value.trim();
                         const n = parseInt(raw, 10);
-                        setBoundingBoxes(prev => prev.map(b => b.id === box.id ? { ...b, objectId: Number.isFinite(n) ? n : null } : b));
+                        const nextBoxes = boundingBoxes.map(b => (
+                          b.id === box.id ? { ...b, objectId: Number.isFinite(n) ? n : null } : b
+                        ));
+                        setBoundingBoxes(nextBoxes);
+                        saveBoxesForFrame(selectedVideoIndex, sampleIndex, nextBoxes);
                       }}
                     />
                     {Object.keys(attributes || {}).length > 0 && (
@@ -726,12 +787,14 @@ const AnnotationPage = () => {
                           value={(box.attributes && box.attributes[attrName]) ?? ''}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setBoundingBoxes(prev => prev.map(b => {
+                            const nextBoxes = boundingBoxes.map(b => {
                               if (b.id !== box.id) return b;
                               const nextAttrs = { ...(b.attributes || {}) };
                               nextAttrs[attrName] = v;
                               return { ...b, attributes: nextAttrs };
-                            }));
+                            });
+                            setBoundingBoxes(nextBoxes);
+                            saveBoxesForFrame(selectedVideoIndex, sampleIndex, nextBoxes);
                           }}
                         >
                           <option value="" disabled>{attrName}</option>

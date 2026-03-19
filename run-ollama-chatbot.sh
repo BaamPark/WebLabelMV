@@ -12,6 +12,7 @@ export CHATBOT_MODEL="qwen3-vl:8b-instruct"
 export CHATBOT_TIMEOUT_SECONDS="300"
 export CHATBOT_MAX_TOKENS="1024"
 export CHATBOT_MAX_IMAGE_BYTES="10485760"
+# Set to "true" to log both the grounded first agent call and the post-tool follow-up call.
 export AGENT_INPUT_LOGGING="true"
 
 docker compose up --build "$@"

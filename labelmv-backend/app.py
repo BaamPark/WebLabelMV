@@ -417,38 +417,63 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
     existing_boxes = _load_target_boxes(project, current_user, frame_target)
 
     if action_name == 'create_box':
-        class_name = action_payload.get('className')
-        if not isinstance(class_name, str) or not class_name.strip():
-            return None, {
-                'success': False,
-                'message': "create_box requires className",
-            }
-        class_name = class_name.strip()
+        requested_boxes = action_payload.get('boxes')
+        if isinstance(requested_boxes, list):
+            if not requested_boxes:
+                return None, {
+                    'success': False,
+                    'message': "create_box boxes must be a non-empty array",
+                }
+            box_specs = requested_boxes
+        else:
+            box_specs = [{
+                'className': action_payload.get('className'),
+                'bbox_1000': action_payload.get('bbox_1000'),
+            }]
 
-        if class_name not in (project.get('classes') or []):
-            return None, {
-                'success': False,
-                'message': f"create_box className '{class_name}' is not in project classes",
-            }
+        created_boxes = []
+        next_boxes = list(existing_boxes)
+        for item_index, box_spec in enumerate(box_specs):
+            if not isinstance(box_spec, dict):
+                return None, {
+                    'success': False,
+                    'message': f"create_box item {item_index} must be an object",
+                }
 
-        bbox_backend, bbox_error = _agent_bbox_to_backend_box(action_payload.get('bbox_1000'))
-        if bbox_error:
-            return None, {
-                'success': False,
-                'message': bbox_error,
-            }
+            class_name = box_spec.get('className')
+            if not isinstance(class_name, str) or not class_name.strip():
+                return None, {
+                    'success': False,
+                    'message': f"create_box item {item_index} requires className",
+                }
+            class_name = class_name.strip()
 
-        new_box = {
-            'id': _generate_box_id(existing_boxes),
-            'left': bbox_backend['left'],
-            'top': bbox_backend['top'],
-            'width': bbox_backend['width'],
-            'height': bbox_backend['height'],
-            'className': class_name,
-            'objectId': 0,
-            'attributes': {name: '' for name in (project.get('attributes') or {}).keys()},
-        }
-        next_boxes = [*existing_boxes, new_box]
+            if class_name not in (project.get('classes') or []):
+                return None, {
+                    'success': False,
+                    'message': f"create_box item {item_index} className '{class_name}' is not in project classes",
+                }
+
+            bbox_backend, bbox_error = _agent_bbox_to_backend_box(box_spec.get('bbox_1000'))
+            if bbox_error:
+                return None, {
+                    'success': False,
+                    'message': f"create_box item {item_index}: {bbox_error}",
+                }
+
+            new_box = {
+                'id': _generate_box_id(next_boxes),
+                'left': bbox_backend['left'],
+                'top': bbox_backend['top'],
+                'width': bbox_backend['width'],
+                'height': bbox_backend['height'],
+                'className': class_name,
+                'objectId': 0,
+                'attributes': {name: '' for name in (project.get('attributes') or {}).keys()},
+            }
+            created_boxes.append(new_box)
+            next_boxes.append(new_box)
+
         _saved_boxes, validation_error = _save_target_boxes(project, current_user, frame_target, next_boxes)
         if validation_error:
             return None, {
@@ -461,17 +486,19 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             'target_frame': target_frame,
             'video_index': frame_target['video_index'],
             'sample_index': frame_target['sample_index'],
-            'box': new_box,
+            'box': created_boxes[0] if len(created_boxes) == 1 else None,
+            'boxes': created_boxes,
         }, {
             'success': True,
             'message': (
-                f"Created a new {class_name} box in the {frame_target['label']} "
+                f"Created {len(created_boxes)} new box(es) in the {frame_target['label']} "
                 f"(video_index={frame_target['video_index']}, sample_index={frame_target['sample_index']})"
             ),
             'action': 'create_box',
             'video_index': frame_target['video_index'],
             'sample_index': frame_target['sample_index'],
-            'box_id': new_box['id'],
+            'box_id': created_boxes[0]['id'] if len(created_boxes) == 1 else None,
+            'box_ids': [box['id'] for box in created_boxes],
         }
 
     if action_name == 'update_box_geometry':
@@ -726,6 +753,7 @@ def _build_tool_result_message(action_payload, action_result):
         action_name = action_payload.get('action')
 
     return json.dumps({
+        'message_type': 'tool_result',
         'tool_name': action_name,
         'tool_result': action_result,
         'instruction': (
@@ -1096,6 +1124,12 @@ def chatbot(current_user):
                     'content': _build_tool_result_message(action_payload, action_result),
                 },
             ]
+
+            log_agent_messages(
+                current_user['_id'],
+                project_id,
+                followup_messages,
+            )
 
             yield json.dumps({
                 "type": "status",

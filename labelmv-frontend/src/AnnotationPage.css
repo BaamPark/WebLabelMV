@@ -11,6 +11,7 @@ body {
   flex-direction: column;
   height: 100vh;
   position: relative;
+  overflow: hidden;
 }
 
 .header {
@@ -40,6 +41,7 @@ body {
 .content {
   display: flex;
   flex: 1;
+  min-height: 0;
 }
 
 .sidebar-left, .sidebar-right {
@@ -48,6 +50,7 @@ body {
   padding: 10px;
   border-right: 1px solid #ddd;
   overflow-y: auto;
+  min-height: 0;
 }
 
 /* Add vertical spacing between tool buttons */
@@ -60,6 +63,14 @@ body {
 .sidebar-right {
   border-right: none;
   border-left: 1px solid #ddd;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-right h3 {
+  margin-bottom: 8px;
+  flex: 0 0 auto;
 }
 
 .center-content {
@@ -72,6 +83,7 @@ body {
   border-right: 1px solid #ddd;
   position: relative;
   overflow: hidden; /* Ensure bounding boxes don't overflow */
+  min-height: 0;
 }
 
 .video-selection {
@@ -181,6 +193,14 @@ body {
   box-sizing: border-box;
   font-size: 13px;
   min-height: 60px; /* ensure taller item */
+}
+
+.annotation-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
 }
 
 .annotation-list .bi-trash {

@@ -8,10 +8,11 @@ export CHATBOT_PROVIDER="openai"
 export CHATBOT_BASE_URL="https://api.openai.com"
 export CHATBOT_REQUEST_PATH="/v1/responses"
 export CHATBOT_API_KEY=""
-export CHATBOT_MODEL="gpt-4.1"
+export CHATBOT_MODEL="gpt-5.4-mini"
 export CHATBOT_TIMEOUT_SECONDS="300"
 export CHATBOT_MAX_TOKENS="1024"
 export CHATBOT_MAX_IMAGE_BYTES="10485760"
+# Set to "true" to log both the grounded first agent call and the post-tool follow-up call.
 export AGENT_INPUT_LOGGING="true"
 
 docker compose up --build "$@"

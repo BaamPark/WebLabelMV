@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './ChatbotPanel.css';
 
 const clampIndex = (value, maxIndex) => Math.max(0, Math.min(maxIndex, value));
@@ -56,6 +56,13 @@ const readNdjsonStream = async (response, onEvent) => {
   }
 };
 
+const splitTextIntoWordChunks = (text) => {
+  const normalized = typeof text === 'string' ? text : '';
+  if (!normalized) return [];
+  const parts = normalized.match(/\S+\s*/g);
+  return parts && parts.length ? parts : [normalized];
+};
+
 const ChatbotPanel = ({
   authToken,
   onClose,
@@ -76,6 +83,8 @@ const ChatbotPanel = ({
   const [targetScope, setTargetScope] = useState('none');
   const [targetBoxId, setTargetBoxId] = useState('none');
   const [sessionContext, setSessionContext] = useState(null);
+  const messagesEndRef = useRef(null);
+  const revealTimerRef = useRef(null);
 
   const videoOptions = selectedVideos.length
     ? selectedVideos
@@ -139,6 +148,10 @@ const ChatbotPanel = ({
   };
 
   const resetSession = () => {
+    if (revealTimerRef.current) {
+      window.clearTimeout(revealTimerRef.current);
+      revealTimerRef.current = null;
+    }
     setPrompt('');
     setMessages([]);
     setIsLoading(false);
@@ -148,14 +161,74 @@ const ChatbotPanel = ({
     setSessionContext(null);
   };
 
+  useEffect(() => () => {
+    if (revealTimerRef.current) {
+      window.clearTimeout(revealTimerRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!sessionContext) return;
+    if (
+      sessionContext.sourceVideoIndex !== currentVideoIndex ||
+      sessionContext.sourceSampleIndex !== currentSampleIndex
+    ) {
+      return;
+    }
+    setSessionContext((current) => (
+      current
+        ? {
+            ...current,
+            currentBoxes,
+          }
+        : current
+    ));
+  }, [currentBoxes, currentSampleIndex, currentVideoIndex, sessionContext]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ block: 'end' });
+  }, [messages, isLoading, error]);
+
   const updateMessageById = (messageId, updates) => {
     setMessages((current) => current.map((message) => (
       message.id === messageId ? { ...message, ...updates } : message
     )));
   };
 
+  const revealAssistantReply = (messageId, fullText, onDone) => {
+    if (revealTimerRef.current) {
+      window.clearTimeout(revealTimerRef.current);
+      revealTimerRef.current = null;
+    }
+
+    const chunks = splitTextIntoWordChunks(fullText);
+    if (!chunks.length) {
+      updateMessageById(messageId, { text: '' });
+      if (onDone) onDone();
+      return;
+    }
+
+    let index = 0;
+    updateMessageById(messageId, { text: '' });
+
+    const step = () => {
+      index += 1;
+      updateMessageById(messageId, {
+        text: chunks.slice(0, index).join(''),
+      });
+      if (index < chunks.length) {
+        revealTimerRef.current = window.setTimeout(step, 24);
+      } else {
+        revealTimerRef.current = null;
+        if (onDone) onDone();
+      }
+    };
+
+    step();
+  };
+
   const applyActionToSessionBoxes = (baseBoxes, actionPayload, actionResult) => {
-    if (!actionResult?.success || !actionPayload?.box) {
+    if (!actionResult?.success) {
       return baseBoxes;
     }
 
@@ -164,7 +237,10 @@ const ChatbotPanel = ({
     }
 
     if (actionPayload.action === 'create_box') {
-      return [...baseBoxes, actionPayload.box];
+      const createdBoxes = Array.isArray(actionPayload.boxes)
+        ? actionPayload.boxes
+        : (actionPayload.box ? [actionPayload.box] : []);
+      return createdBoxes.length ? [...baseBoxes, ...createdBoxes] : baseBoxes;
     }
 
     if (actionPayload.action === 'update_box_geometry') {
@@ -283,11 +359,17 @@ const ChatbotPanel = ({
       );
 
       updateMessageById(pendingAssistantId, {
-        text: finalPayload.reply || '',
-        meta: [
-          [finalPayload.provider, finalPayload.model].filter(Boolean).join(' • '),
-          finalPayload.actionResult?.message || '',
-        ].filter(Boolean).join(' • '),
+        text: '',
+        meta: '',
+      });
+
+      revealAssistantReply(pendingAssistantId, finalPayload.reply || '', () => {
+        updateMessageById(pendingAssistantId, {
+          meta: [
+            [finalPayload.provider, finalPayload.model].filter(Boolean).join(' • '),
+            finalPayload.actionResult?.message || '',
+          ].filter(Boolean).join(' • '),
+        });
       });
 
       if (finalPayload.actionResult?.success && typeof onActionApplied === 'function') {
@@ -350,6 +432,7 @@ const ChatbotPanel = ({
           </div>
         ))}
 
+        <div ref={messagesEndRef} />
       </div>
 
       <form className="chatbot-panel-composer" onSubmit={handleSubmit}>
