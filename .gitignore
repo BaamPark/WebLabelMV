@@ -8,3 +8,4 @@ annotations/
 *.pyc
 *.png
 *.ipynb
+*.DS_Store
