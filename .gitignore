@@ -4,6 +4,7 @@
 videos/
 .venv/
 annotations/
+*.DS_Store
 *.pt
 *.pyc
 *.png
