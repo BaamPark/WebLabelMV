@@ -143,7 +143,7 @@ const AnnotationPage = () => {
     try {
       // ensure objectId defaults to 0 if not provided or invalid
       const boxesToSave = (boxes || []).map(b => {
-        const n = parseInt(b.objectId, 10);
+        const n = parseInt((b.objectId ?? b.id), 10);
         return { ...b, objectId: Number.isFinite(n) ? n : 0 };
       });
       const resp = await fetch(`/api/projects/${projectId}/annotations?video_index=${videoIndex}&sample_index=${sIndex}`, {
@@ -180,7 +180,12 @@ const AnnotationPage = () => {
         throw new Error(`GET ${response.status}: ${txt}`);
       }
       const data = await response.json();
-      setBoundingBoxes(Array.isArray(data) ? data : []);
+      const normalizedBoxes = Array.isArray(data) ? data.map((box) => ({
+        ...box,
+        id: box.boxId ?? box.id,
+        objectId: box.objectId ?? (box.boxId != null ? box.id : box.objectId),
+      })) : [];
+      setBoundingBoxes(normalizedBoxes);
     } catch (error) {
       if (error.name !== 'AbortError') console.error('Error fetching annotations:', error);
       setBoundingBoxes([]);
@@ -349,6 +354,7 @@ const AnnotationPage = () => {
         height: 0,
         className: defaultClass,
         objectId: null,
+        boxId: null,
         attributes: defaultAttrs
       }
     ]);
