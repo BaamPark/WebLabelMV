@@ -101,7 +101,7 @@ const ChatbotPanel = ({
     { value: 'none', label: 'None' },
     ...activeCurrentBoxes.map((box, index) => ({
       value: String(box.id),
-      label: `Box ${index + 1}${box.className ? ` • ${box.className}` : ''}${box.objectId != null && box.objectId !== 0 ? ` • ID ${box.objectId}` : ''}`,
+      label: `Box ${index + 1}${box.className ? ` • ${box.className}` : ''}${((box.objectId ?? (box.boxId != null ? box.id : null)) != null && (box.objectId ?? (box.boxId != null ? box.id : null)) !== 0) ? ` • ID ${box.objectId ?? (box.boxId != null ? box.id : null)}` : ''}`,
     })),
   ];
   const targetOptions = [

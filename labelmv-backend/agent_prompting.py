@@ -34,9 +34,9 @@ def serialize_boxes_for_prompt(boxes):
     for box in boxes or []:
         grounding = box_to_grounding(box)
         items.append({
-            'id': box.get('id'),
+            'boxId': box.get('id'),
             'className': box.get('className') or '',
-            'objectId': box.get('objectId'),
+            'id': box.get('objectId'),
             'attributes': box.get('attributes') or {},
             'bbox_1000': [grounding['x1'], grounding['y1'], grounding['x2'], grounding['y2']],
         })
@@ -101,6 +101,8 @@ def build_contextual_chat_prompt(user_text, project, image_relationship_text=Non
         "{\"action\":\"update_box_object_id\",\"target_frame\":\"current|target\",\"box_id\":\"<existing box id>\","
         "\"objectId\":<non-negative integer>}. "
         "Use bbox_1000 integers in [0,1000]. Use target_frame=\"target\" only when a target frame is available. "
+        "In context JSON, user-facing tracking id is shown as id, while boxId is the internal box reference key. "
+        "When the user says update the id, they mean the tracking/object id, not boxId. "
         "Do not include objectId or attributes for create_box; the backend will set defaults."
     )
 

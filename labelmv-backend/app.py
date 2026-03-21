@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify, Response, stream_with_context
 from flask import send_file
 from flask_cors import CORS
 import os
+import secrets
 import json
 import jwt
 import datetime
@@ -170,7 +171,7 @@ def _normalize_and_validate_boxes(boxes, project):
         if not isinstance(box, dict):
             return None, f"Invalid box at index {index}: each box must be a JSON object"
 
-        box_id = box.get('id')
+        box_id = box.get('boxId', box.get('id'))
         if not _is_valid_box_id(box_id):
             return None, f"Invalid box at index {index}: id is required and must be a string or number"
 
@@ -227,7 +228,7 @@ def _normalize_and_validate_boxes(boxes, project):
         if project_classes and class_name not in project_classes:
             return None, f"Invalid box at index {index}: className '{class_name}' is not in project classes"
 
-        object_id_raw = box.get('objectId', 0)
+        object_id_raw = box.get('objectId', box.get('id', 0) if 'boxId' in box else 0)
         try:
             object_id = int(object_id_raw)
         except (TypeError, ValueError):
@@ -276,6 +277,45 @@ def _normalize_and_validate_boxes(boxes, project):
     return normalized_boxes, None
 
 
+def _normalize_box_shape_for_app(box):
+    if not isinstance(box, dict):
+        return box
+    internal_id = box.get('boxId', box.get('id'))
+    user_id = box.get('objectId')
+    if user_id is None and 'boxId' in box:
+        user_id = box.get('id')
+    return {
+        **box,
+        'id': internal_id,
+        'objectId': user_id,
+    }
+
+
+def _normalize_boxes_shape_for_app(boxes):
+    if not isinstance(boxes, list):
+        return []
+    return [_normalize_box_shape_for_app(box) for box in boxes if isinstance(box, dict)]
+
+
+def _normalize_box_shape_for_export(box):
+    if not isinstance(box, dict):
+        return box
+    internal_id = box.get('boxId', box.get('id'))
+    user_id = box.get('objectId')
+    if user_id is None and 'boxId' in box:
+        user_id = box.get('id')
+    exported = {k: v for k, v in box.items() if k not in {'id', 'objectId', 'boxId'}}
+    exported['boxId'] = internal_id
+    exported['id'] = user_id
+    return exported
+
+
+def _normalize_boxes_shape_for_export(boxes):
+    if not isinstance(boxes, list):
+        return []
+    return [_normalize_box_shape_for_export(box) for box in boxes if isinstance(box, dict)]
+
+
 def _get_owned_project(current_user, project_id):
     pid_key = _coerce_project_id(project_id)
     if pid_key is None:
@@ -294,7 +334,7 @@ def _get_annotation_boxes_for(user_id, project_id, video_index, sample_index):
         'sample_index': int(sample_index),
     })
     boxes = doc.get('boxes') if doc else []
-    return boxes if isinstance(boxes, list) else []
+    return _normalize_boxes_shape_for_app(boxes)
 
 
 def _upsert_frame_annotations(user_id, project_id, video_index, sample_index, boxes):
@@ -319,11 +359,12 @@ def _upsert_frame_annotations(user_id, project_id, video_index, sample_index, bo
 
 
 def _generate_box_id(existing_boxes):
-    candidate = int(datetime.datetime.utcnow().timestamp() * 1000)
+    alphabet = '0123456789abcdefghijklmnopqrstuvwxyz'
     existing_ids = {str(box.get('id')) for box in existing_boxes or []}
-    while str(candidate) in existing_ids:
-        candidate += 1
-    return candidate
+    while True:
+        candidate = ''.join(secrets.choice(alphabet) for _ in range(6))
+        if candidate not in existing_ids:
+            return candidate
 
 
 def _resolve_action_target(action_target_frame, source_video_index, source_sample_index,
@@ -1389,7 +1430,7 @@ def export_project_annotations(current_user, project_id):
         annotations.append({
             'video_index': int(doc.get('video_index', 0)),
             'sample_index': int(doc.get('sample_index', 0)),
-            'boxes': doc.get('boxes') or [],
+            'boxes': _normalize_boxes_shape_for_export(doc.get('boxes') or []),
             'updated_at': doc.get('updated_at').isoformat() if doc.get('updated_at') else None,
             'created_at': doc.get('created_at').isoformat() if doc.get('created_at') else None,
         })
@@ -1766,7 +1807,7 @@ def get_frame_annotations(current_user, project_id):
         'sample_index': int(sample_index),
     })
     boxes = doc.get('boxes') if doc else []
-    return jsonify(boxes)
+    return jsonify(_normalize_boxes_shape_for_app(boxes))
 
 
 @app.route('/api/projects/<project_id>/annotations', methods=['POST'])
