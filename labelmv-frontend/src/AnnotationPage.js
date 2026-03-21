@@ -3,6 +3,7 @@ import './AnnotationPage.css';
 import { ProjectContext, AuthContext } from './App';
 import ChatbotPanel from './ChatbotPanel';
 
+const generateBoxId = () => Math.random().toString(36).slice(2, 8).padEnd(6, '0').slice(0, 6);
 
 const AnnotationPage = () => {
   const [isDrawingEnabled, setIsDrawingEnabled] = useState(false);
@@ -347,7 +348,7 @@ const AnnotationPage = () => {
     setBoundingBoxes(prev => [
       ...prev,
       {
-        id: Date.now(), // Unique ID for each bounding box
+        id: generateBoxId(), // Internal box ID for each bounding box
         left: x, // normalized [0,1]
         top: y,  // normalized [0,1]
         width: 0,

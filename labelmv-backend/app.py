@@ -14,6 +14,7 @@ from bson import ObjectId
 import cv2
 import math
 import io
+import numpy as np
 
 from agent_prompting import (
     build_contextual_chat_prompt,
@@ -168,7 +169,9 @@ def _normalize_and_validate_boxes(boxes, project):
         if not isinstance(box, dict):
             return None, f"Invalid box at index {index}: each box must be a JSON object"
 
-        box_id = box.get('boxId', box.get('id'))
+        box_id = box.get('boxId')
+        if box_id in (None, ''):
+            box_id = box.get('id')
         if not _is_valid_box_id(box_id):
             return None, f"Invalid box at index {index}: id is required and must be a string or number"
 
@@ -225,7 +228,10 @@ def _normalize_and_validate_boxes(boxes, project):
         if project_classes and class_name not in project_classes:
             return None, f"Invalid box at index {index}: className '{class_name}' is not in project classes"
 
-        object_id_raw = box.get('objectId', box.get('id', 0) if 'boxId' in box else 0)
+        object_id_raw = box.get('objectId')
+        if object_id_raw is None:
+            has_new_schema_box_id = box.get('boxId') not in (None, '')
+            object_id_raw = box.get('id', 0) if has_new_schema_box_id else 0
         try:
             object_id = int(object_id_raw)
         except (TypeError, ValueError):
@@ -277,9 +283,11 @@ def _normalize_and_validate_boxes(boxes, project):
 def _normalize_box_shape_for_app(box):
     if not isinstance(box, dict):
         return box
-    internal_id = box.get('boxId', box.get('id'))
+    internal_id = box.get('boxId')
+    if internal_id in (None, ''):
+        internal_id = box.get('id')
     user_id = box.get('objectId')
-    if user_id is None and 'boxId' in box:
+    if user_id is None and box.get('boxId') not in (None, ''):
         user_id = box.get('id')
     return {
         **box,
@@ -292,6 +300,30 @@ def _normalize_boxes_shape_for_app(boxes):
     if not isinstance(boxes, list):
         return []
     return [_normalize_box_shape_for_app(box) for box in boxes if isinstance(box, dict)]
+
+
+def _normalize_box_shape_for_export(box):
+    if not isinstance(box, dict):
+        return box
+    internal_id = box.get('boxId')
+    if internal_id in (None, ''):
+        internal_id = box.get('id')
+    user_id = box.get('objectId')
+    if user_id is None and box.get('boxId') not in (None, ''):
+        user_id = box.get('id')
+    exported = {
+        **box,
+        'boxId': internal_id,
+        'id': user_id,
+    }
+    exported.pop('objectId', None)
+    return exported
+
+
+def _normalize_boxes_shape_for_export(boxes):
+    if not isinstance(boxes, list):
+        return []
+    return [_normalize_box_shape_for_export(box) for box in boxes if isinstance(box, dict)]
 
 
 def _get_owned_project(current_user, project_id):
@@ -812,6 +844,64 @@ def _read_frame_bytes(project, video_index, sample_index):
     return buf.tobytes(), info
 
 
+def _render_current_frame_overlay(frame_bytes, boxes):
+    image_array = cv2.imdecode(np.frombuffer(frame_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image_array is None:
+        raise ChatbotServiceError("Failed to decode frame for overlay rendering", status_code=500)
+
+    image_h, image_w = image_array.shape[:2]
+    box_color = (0, 255, 0)
+    text_color = (255, 255, 255)
+    text_bg_color = (0, 0, 0)
+    box_thickness = 3
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.65
+    font_thickness = 2
+    text_padding_x = 6
+    text_padding_y = 5
+    label_gap = 4
+
+    for box in boxes or []:
+        try:
+            left = float(box.get('left', 0.0))
+            top = float(box.get('top', 0.0))
+            width = float(box.get('width', 0.0))
+            height = float(box.get('height', 0.0))
+        except (TypeError, ValueError):
+            continue
+
+        x1 = max(0, min(image_w - 1, int(round(left * image_w))))
+        y1 = max(0, min(image_h - 1, int(round(top * image_h))))
+        x2 = max(0, min(image_w - 1, int(round((left + width) * image_w))))
+        y2 = max(0, min(image_h - 1, int(round((top + height) * image_h))))
+
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        cv2.rectangle(image_array, (x1, y1), (x2, y2), box_color, box_thickness)
+
+        object_id = box.get('objectId')
+        if object_id is None:
+            continue
+        label_text = f"id={object_id}"
+        (text_w, text_h), baseline = cv2.getTextSize(label_text, font, font_scale, font_thickness)
+        rect_w = text_w + (text_padding_x * 2)
+        rect_h = text_h + (text_padding_y * 2) + baseline
+        rect_x2 = x2
+        rect_x1 = max(0, rect_x2 - rect_w)
+        rect_y2 = max(rect_h, y1 + rect_h + label_gap)
+        rect_y1 = max(0, rect_y2 - rect_h)
+        cv2.rectangle(image_array, (rect_x1, rect_y1), (rect_x2, rect_y2), text_bg_color, thickness=-1)
+        text_x = rect_x1 + text_padding_x
+        text_y = rect_y2 - baseline - text_padding_y
+        cv2.putText(image_array, label_text, (text_x, text_y), font, font_scale, text_color, font_thickness, lineType=cv2.LINE_AA)
+
+    ok, buf = cv2.imencode('.jpg', image_array)
+    if not ok:
+        raise ChatbotServiceError("Failed to encode overlaid frame", status_code=500)
+    return buf.tobytes()
+
+
 def _describe_image_relationship(target_scope, source_video_index, target_video_index, project):
     if target_scope == 'previous_current_view':
         return 'the previous frame from the current view'
@@ -1023,10 +1113,15 @@ def chatbot(current_user):
                 source_sample_index,
             )
 
+        try:
+            source_overlay_bytes = _render_current_frame_overlay(source_frame_bytes, source_boxes)
+        except ChatbotServiceError as error:
+            return jsonify({"error": error.message}), error.status_code
+
         contextual_images = [{
-            'bytes': source_frame_bytes,
+            'bytes': source_overlay_bytes,
             'mime_type': 'image/jpeg',
-            'filename': f"source_view_{source_video_index}_frame_{source_sample_index}.jpg",
+            'filename': f"source_view_{source_video_index}_frame_{source_sample_index}_overlay.jpg",
         }]
         boxes_for_current_frame = serialize_boxes_for_prompt(source_boxes)
         target_box = None
@@ -1349,7 +1444,7 @@ def export_project_annotations(current_user, project_id):
         annotations.append({
             'video_index': int(doc.get('video_index', 0)),
             'sample_index': int(doc.get('sample_index', 0)),
-            'boxes': doc.get('boxes') or [],
+            'boxes': _normalize_boxes_shape_for_export(doc.get('boxes') or []),
             'updated_at': doc.get('updated_at').isoformat() if doc.get('updated_at') else None,
             'created_at': doc.get('created_at').isoformat() if doc.get('created_at') else None,
         })
