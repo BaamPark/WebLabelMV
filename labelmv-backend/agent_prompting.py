@@ -70,7 +70,7 @@ def build_contextual_chat_prompt(user_text, project, image_relationship_text=Non
     if target_box is not None:
         payload['selected_box_from_current_frame'] = target_box
 
-    image_order = "Image order:\n- Image 1: current frame\n"
+    image_order = "Image order:\n- Image 1: current frame with overlaid current-frame boxes labeled by id\n"
     if image_relationship_text:
         image_order += f"- Image 2: {image_relationship_text}\n"
         image_order += "- Target frame: Image 2\n"
