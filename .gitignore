@@ -3,7 +3,7 @@
 .vscode/
 videos/
 .venv/
-annotations/
+evaluation/
 *.pt
 *.pyc
 *.png
