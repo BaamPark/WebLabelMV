@@ -1142,6 +1142,17 @@ def chatbot(current_user):
             except ChatbotServiceError as error:
                 return jsonify({"error": error.message}), error.status_code
 
+            target_boxes = _get_annotation_boxes_for(
+                current_user['_id'],
+                project['_id'],
+                target_video_index,
+                target_sample_index,
+            )
+            try:
+                target_overlay_bytes = _render_current_frame_overlay(target_frame_bytes, target_boxes)
+            except ChatbotServiceError as error:
+                return jsonify({"error": error.message}), error.status_code
+
             has_additional_frame = True
             image_relationship_text = _describe_image_relationship(
                 target_scope,
@@ -1150,9 +1161,9 @@ def chatbot(current_user):
                 project,
             )
             contextual_images.append({
-                'bytes': target_frame_bytes,
+                'bytes': target_overlay_bytes,
                 'mime_type': 'image/jpeg',
-                'filename': f"target_view_{target_video_index}_frame_{target_sample_index}.jpg",
+                'filename': f"target_view_{target_video_index}_frame_{target_sample_index}_overlay.jpg",
             })
 
         first_user_text = text
@@ -1166,7 +1177,6 @@ def chatbot(current_user):
             project,
             image_relationship_text=image_relationship_text,
             boxes_for_current_frame=boxes_for_current_frame,
-            target_box=target_box,
         )
         ollama_messages = [{
             'role': 'user',
