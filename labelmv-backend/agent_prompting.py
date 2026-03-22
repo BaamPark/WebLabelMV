@@ -57,7 +57,7 @@ def build_turn_user_message(user_text, selected_box=None):
 
 
 def build_contextual_chat_prompt(user_text, project, image_relationship_text=None,
-                                 boxes_for_current_frame=None, target_box=None):
+                                 boxes_for_current_frame=None):
     payload = {
         'task': 'Answer the user question using the provided annotation context. Do not propose or execute actions unless the user explicitly asks for analysis of possible edits.',
         'project': {
@@ -67,12 +67,10 @@ def build_contextual_chat_prompt(user_text, project, image_relationship_text=Non
     }
     if boxes_for_current_frame is not None:
         payload['boxes_for_current_frame'] = boxes_for_current_frame
-    if target_box is not None:
-        payload['selected_box_from_current_frame'] = target_box
 
     image_order = "Image order:\n- Image 1: current frame with overlaid current-frame boxes labeled by id\n"
     if image_relationship_text:
-        image_order += f"- Image 2: {image_relationship_text}\n"
+        image_order += f"- Image 2: {image_relationship_text} with overlaid target-frame boxes labeled by id\n"
         image_order += "- Target frame: Image 2\n"
     else:
         image_order += "- Target frame: Image 1\n"
@@ -80,6 +78,8 @@ def build_contextual_chat_prompt(user_text, project, image_relationship_text=Non
     action_instructions = (
         "If the user asks you to create a new annotation box or adjust an existing box, append exactly one final "
         "line beginning with ACTION_JSON: followed by compact JSON on the same line. "
+        "Do not output bare JSON without the ACTION_JSON: prefix. "
+        "One-shot example: ACTION_JSON: {\"action\":\"update_box_object_id\",\"target_frame\":\"current\",\"box_id\":\"x82lq2\",\"objectId\":1}. "
         "For the supported create action, use either this single-box schema: "
         "{\"action\":\"create_box\",\"target_frame\":\"current|target\",\"className\":\"<project class>\","
         "\"bbox_1000\":[x1,y1,x2,y2]} "
