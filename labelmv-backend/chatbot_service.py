@@ -19,6 +19,16 @@ def _read_int_env(name, default_value):
         return default_value
 
 
+def _read_float_env(name, default_value):
+    value = os.environ.get(name)
+    if value is None:
+        return default_value
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default_value
+
+
 @dataclass
 class ChatbotConfig:
     provider: str
@@ -31,6 +41,8 @@ class ChatbotConfig:
     max_prompt_chars: int
     max_image_bytes: int
     ollama_think: str
+    seed: int | None
+    temperature: float
 
 
 def load_chatbot_config():
@@ -45,6 +57,12 @@ def load_chatbot_config():
         max_prompt_chars=max(1, _read_int_env("CHATBOT_MAX_PROMPT_CHARS", 12000)),
         max_image_bytes=max(1024, _read_int_env("CHATBOT_MAX_IMAGE_BYTES", 5 * 1024 * 1024)),
         ollama_think=(os.environ.get("CHATBOT_OLLAMA_THINK", "false").strip()),
+        seed=(
+            _read_int_env("CHATBOT_SEED", 0)
+            if os.environ.get("CHATBOT_SEED") not in (None, "")
+            else None
+        ),
+        temperature=_read_float_env("CHATBOT_TEMPERATURE", 0.2),
     )
 
 
@@ -163,12 +181,15 @@ class ChatbotProxyService:
                     "role": "model" if message["role"] == "assistant" else "user",
                     "parts": parts,
                 })
+            generation_config = {
+                "temperature": self.config.temperature,
+                "maxOutputTokens": self.config.max_tokens,
+            }
+            if self.config.seed is not None:
+                generation_config["seed"] = self.config.seed
             return {
                 "contents": contents,
-                "generationConfig": {
-                    "temperature": 0.2,
-                    "maxOutputTokens": self.config.max_tokens,
-                },
+                "generationConfig": generation_config,
             }
 
         ollama_messages = []
@@ -184,15 +205,18 @@ class ChatbotProxyService:
                 ]
             ollama_messages.append(item)
 
+        ollama_options = {
+            "num_predict": self.config.max_tokens,
+            "temperature": self.config.temperature,
+        }
+        if self.config.seed is not None:
+            ollama_options["seed"] = self.config.seed
         payload = {
             "model": self.config.model_id,
             "messages": ollama_messages,
             "stream": False,
             "think": self._normalized_ollama_think(),
-            "options": {
-                "num_predict": self.config.max_tokens,
-                "temperature": 0.2,
-            },
+            "options": ollama_options,
         }
         return payload
 

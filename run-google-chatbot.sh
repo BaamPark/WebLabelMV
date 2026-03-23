@@ -11,6 +11,8 @@ export CHATBOT_API_KEY=""
 export CHATBOT_MODEL="gemini-3-flash-preview"
 export CHATBOT_TIMEOUT_SECONDS="300"
 export CHATBOT_MAX_TOKENS="2048"
+export CHATBOT_SEED="42"
+export CHATBOT_TEMPERATURE="0.8"
 export CHATBOT_MAX_IMAGE_BYTES="10485760"
 # Set to "true" to log both the grounded first agent call and the post-tool follow-up call.
 export AGENT_INPUT_LOGGING="false"
