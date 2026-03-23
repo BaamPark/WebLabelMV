@@ -97,6 +97,29 @@ const ChatbotPanel = ({
   const activeTargetScope = sessionContext ? sessionContext.targetScope : targetScope;
   const activeTargetBoxId = targetBoxId;
   const sourceVideoLabel = viewLabels[activeSourceVideoIndex] || `View ${activeSourceVideoIndex + 1}`;
+  const serializeSelectedBoxForHistory = (box) => {
+    if (!box) {
+      return null;
+    }
+    const left = Number(box.left || 0);
+    const top = Number(box.top || 0);
+    const width = Number(box.width || 0);
+    const height = Number(box.height || 0);
+    const clamp1000 = (value) => Math.max(0, Math.min(1000, Math.round(value)));
+    return {
+      boxId: box.id,
+      className: box.className || '',
+      id: box.objectId ?? 0,
+      attributes: box.attributes || {},
+      bbox_1000: [
+        clamp1000(left * 1000),
+        clamp1000(top * 1000),
+        clamp1000((left + width) * 1000),
+        clamp1000((top + height) * 1000),
+      ],
+    };
+  };
+
   const targetBoxOptions = [
     { value: 'none', label: 'None' },
     ...activeCurrentBoxes.map((box, index) => ({
@@ -276,7 +299,14 @@ const ChatbotPanel = ({
       .map((message) => ({
         role: message.role,
         text: message.text,
+        selected_box: message.selectedBox || null,
       }));
+
+    const historySelectedBox = serializeSelectedBoxForHistory(
+      activeTargetBoxId && activeTargetBoxId !== 'none'
+        ? (activeCurrentBoxes || []).find((box) => String(box.id) === String(activeTargetBoxId))
+        : null,
+    );
 
     const userMessageId = Date.now();
     const pendingAssistantId = userMessageId + 1;
@@ -286,6 +316,7 @@ const ChatbotPanel = ({
         id: userMessageId,
         role: 'user',
         text: trimmedPrompt,
+        selectedBox: historySelectedBox,
         meta: `Source ${sourceVideoLabel} • frame ${activeSourceSampleIndex} • ${targetSummary} • ${targetBoxSummary}${selectedBoxId != null ? ` • UI Selected Box ${selectedBoxId}` : ''}`,
       },
       {
