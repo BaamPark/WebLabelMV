@@ -56,8 +56,8 @@ def build_turn_user_message(user_text, selected_box=None):
     )
 
 
-def build_contextual_chat_prompt(user_text, project, image_relationship_text=None,
-                                 boxes_for_current_frame=None, target_box=None):
+def build_contextual_chat_prompt(project, image_relationship_text=None,
+                                 boxes_for_current_frame=None):
     payload = {
         'task': 'Answer the user question using the provided annotation context. Do not propose or execute actions unless the user explicitly asks for analysis of possible edits.',
         'project': {
@@ -67,8 +67,6 @@ def build_contextual_chat_prompt(user_text, project, image_relationship_text=Non
     }
     if boxes_for_current_frame is not None:
         payload['boxes_for_current_frame'] = boxes_for_current_frame
-    if target_box is not None:
-        payload['selected_box_from_current_frame'] = target_box
 
     image_order = "Image order:\n- Image 1: current frame with overlaid current-frame boxes labeled by id\n"
     if image_relationship_text:
@@ -115,8 +113,7 @@ def build_contextual_chat_prompt(user_text, project, image_relationship_text=Non
     )
     return (
         f"{instructions}\n\n"
-        f"Context JSON:\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n\n"
-        f"User Query:\n{user_text}"
+        f"Context JSON:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
 
