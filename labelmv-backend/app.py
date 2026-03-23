@@ -892,8 +892,9 @@ def _build_tool_result_message(action_payload, action_result):
         'tool_name': action_name,
         'tool_result': action_result,
         'instruction': (
-            'Use this tool result to answer the user. '
-            'Do not emit ACTION_JSON in your next response.'
+            'Use this tool result to continue solving the user request. '
+            'If more tool use is needed, emit another ACTION_JSON. '
+            'Otherwise, answer the user directly.'
         ),
     }, ensure_ascii=False)
 
@@ -1163,7 +1164,6 @@ def chatbot(current_user):
             project,
             image_relationship_text=image_relationship_text,
             boxes_for_current_frame=boxes_for_current_frame,
-            target_box=target_box,
         )
         ollama_messages = [{
             'role': 'user',
