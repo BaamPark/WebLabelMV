@@ -12,6 +12,8 @@ export CHATBOT_MODEL="qwen3.5:9b"
 export CHATBOT_OLLAMA_THINK="false"
 export CHATBOT_TIMEOUT_SECONDS="300"
 export CHATBOT_MAX_TOKENS="1024"
+export CHATBOT_SEED="42"
+export CHATBOT_TEMPERATURE="0.8"
 export CHATBOT_MAX_IMAGE_BYTES="10485760"
 # Set to "true" to log both the grounded first agent call and the post-tool follow-up call.
 export AGENT_INPUT_LOGGING="true"
