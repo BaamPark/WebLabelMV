@@ -1178,6 +1178,7 @@ def chatbot(current_user):
             project,
             image_relationship_text=image_relationship_text,
             boxes_for_current_frame=boxes_for_current_frame,
+            target_box=target_box,
         )
         ollama_messages = [{
             'role': 'user',
