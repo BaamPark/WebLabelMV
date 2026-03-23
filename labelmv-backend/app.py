@@ -1104,10 +1104,19 @@ def chatbot(current_user):
             continue
         role = (item.get('role') or '').strip()
         text_value = (item.get('text') or '').strip()
+        selected_box_value = item.get('selected_box')
+        normalized_selected_box = None
+        if isinstance(selected_box_value, dict):
+            if 'bbox_1000' in selected_box_value and 'boxId' in selected_box_value:
+                normalized_selected_box = selected_box_value
+            else:
+                serialized_selected_boxes = serialize_boxes_for_prompt([selected_box_value])
+                normalized_selected_box = serialized_selected_boxes[0] if serialized_selected_boxes else None
         if role and text_value:
             normalized_chat_history.append({
                 'role': role,
                 'text': text_value,
+                'selected_box': normalized_selected_box,
             })
 
     ollama_messages = [{'role': 'user', 'content': text}]
@@ -1153,14 +1162,13 @@ def chatbot(current_user):
                 project,
             )
 
-        first_user_text = text
         remaining_history = normalized_chat_history
+        first_user_message = None
         if normalized_chat_history and normalized_chat_history[0].get('role') == 'user':
-            first_user_text = normalized_chat_history[0].get('text') or text
+            first_user_message = normalized_chat_history[0]
             remaining_history = normalized_chat_history[1:]
 
         grounded_first_user = build_contextual_chat_prompt(
-            first_user_text,
             project,
             image_relationship_text=image_relationship_text,
             boxes_for_current_frame=boxes_for_current_frame,
@@ -1169,16 +1177,26 @@ def chatbot(current_user):
             'role': 'user',
             'content': grounded_first_user,
         }]
-        for item in remaining_history:
-            ollama_messages.append({
-                'role': item['role'],
-                'content': item['text'],
-            })
-        if normalized_chat_history:
+        if first_user_message is not None:
             ollama_messages.append({
                 'role': 'user',
-                'content': build_turn_user_message(text, target_box),
+                'content': build_turn_user_message(
+                    first_user_message.get('text') or '',
+                    first_user_message.get('selected_box'),
+                ),
             })
+        for item in remaining_history:
+            content = item['text']
+            if item.get('role') == 'user':
+                content = build_turn_user_message(item['text'], item.get('selected_box'))
+            ollama_messages.append({
+                'role': item['role'],
+                'content': content,
+            })
+        ollama_messages.append({
+            'role': 'user',
+            'content': build_turn_user_message(text, target_box),
+        })
 
     log_agent_messages(
         current_user['_id'],
