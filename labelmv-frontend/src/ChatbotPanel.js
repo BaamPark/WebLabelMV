@@ -282,6 +282,11 @@ const ChatbotPanel = ({
       ));
     }
 
+    if (actionPayload.action === 'delete_box') {
+      const deletedBoxId = actionPayload.box?.id ?? actionResult?.box_id;
+      return baseBoxes.filter((box) => String(box.id) !== String(deletedBoxId));
+    }
+
     return baseBoxes;
   };
 
