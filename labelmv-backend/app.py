@@ -796,19 +796,30 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
         }
 
     if action_name == 'delete_box':
-        box_id = action_payload.get('box_id')
+        requested_box_ids = action_payload.get('box_ids')
+        if isinstance(requested_box_ids, list):
+            if not requested_box_ids:
+                return None, {
+                    'success': False,
+                    'message': "delete_box box_ids must be a non-empty array",
+                }
+            box_ids = requested_box_ids
+        else:
+            box_ids = [action_payload.get('box_id')]
 
-        target_box_index, target_box, target_box_error = _find_target_box(
-            existing_boxes,
-            box_id,
-            'delete_box',
-            frame_target,
-        )
-        if target_box_error:
-            return None, target_box_error
-
+        deleted_boxes = []
         next_boxes = list(existing_boxes)
-        deleted_box = next_boxes.pop(target_box_index)
+        for box_id in box_ids:
+            target_box_index, target_box, target_box_error = _find_target_box(
+                next_boxes,
+                box_id,
+                'delete_box',
+                frame_target,
+            )
+            if target_box_error:
+                return None, target_box_error
+            deleted_boxes.append(next_boxes.pop(target_box_index))
+
         _saved_boxes, validation_error = _save_target_boxes(project, current_user, frame_target, next_boxes)
         if validation_error:
             return None, {
@@ -821,17 +832,19 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             'target_frame': target_frame,
             'video_index': frame_target['video_index'],
             'sample_index': frame_target['sample_index'],
-            'box': deleted_box,
+            'box': deleted_boxes[0] if len(deleted_boxes) == 1 else None,
+            'boxes': deleted_boxes,
         }, {
             'success': True,
             'message': (
-                f"Deleted box_id={box_id} from the {frame_target['label']} "
+                f"Deleted {len(deleted_boxes)} box(es) from the {frame_target['label']} "
                 f"(video_index={frame_target['video_index']}, sample_index={frame_target['sample_index']})"
             ),
             'action': 'delete_box',
             'video_index': frame_target['video_index'],
             'sample_index': frame_target['sample_index'],
-            'box_id': deleted_box['id'],
+            'box_id': deleted_boxes[0]['id'] if len(deleted_boxes) == 1 else None,
+            'box_ids': [box['id'] for box in deleted_boxes],
         }
 
     return None, {
