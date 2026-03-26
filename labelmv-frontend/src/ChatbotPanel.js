@@ -283,8 +283,12 @@ const ChatbotPanel = ({
     }
 
     if (actionPayload.action === 'delete_box') {
-      const deletedBoxId = actionPayload.box?.id ?? actionResult?.box_id;
-      return baseBoxes.filter((box) => String(box.id) !== String(deletedBoxId));
+      const deletedBoxIds = Array.isArray(actionPayload.boxes)
+        ? actionPayload.boxes.map((box) => String(box.id))
+        : (Array.isArray(actionResult?.box_ids)
+          ? actionResult.box_ids.map((boxId) => String(boxId))
+          : [String(actionPayload.box?.id ?? actionResult?.box_id)]);
+      return baseBoxes.filter((box) => !deletedBoxIds.includes(String(box.id)));
     }
 
     return baseBoxes;
