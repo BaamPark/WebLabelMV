@@ -795,6 +795,45 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             'box_id': updated_box['id'],
         }
 
+    if action_name == 'delete_box':
+        box_id = action_payload.get('box_id')
+
+        target_box_index, target_box, target_box_error = _find_target_box(
+            existing_boxes,
+            box_id,
+            'delete_box',
+            frame_target,
+        )
+        if target_box_error:
+            return None, target_box_error
+
+        next_boxes = list(existing_boxes)
+        deleted_box = next_boxes.pop(target_box_index)
+        _saved_boxes, validation_error = _save_target_boxes(project, current_user, frame_target, next_boxes)
+        if validation_error:
+            return None, {
+                'success': False,
+                'message': validation_error,
+            }
+
+        return {
+            'action': 'delete_box',
+            'target_frame': target_frame,
+            'video_index': frame_target['video_index'],
+            'sample_index': frame_target['sample_index'],
+            'box': deleted_box,
+        }, {
+            'success': True,
+            'message': (
+                f"Deleted box_id={box_id} from the {frame_target['label']} "
+                f"(video_index={frame_target['video_index']}, sample_index={frame_target['sample_index']})"
+            ),
+            'action': 'delete_box',
+            'video_index': frame_target['video_index'],
+            'sample_index': frame_target['sample_index'],
+            'box_id': deleted_box['id'],
+        }
+
     return None, {
         'success': False,
         'message': f"Unsupported action '{action_name}'",
