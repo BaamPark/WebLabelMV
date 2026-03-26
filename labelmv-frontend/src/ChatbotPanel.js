@@ -267,9 +267,14 @@ const ChatbotPanel = ({
     }
 
     if (actionPayload.action === 'update_box_geometry') {
-      return baseBoxes.map((box) => (
-        String(box.id) === String(actionPayload.box.id) ? actionPayload.box : box
-      ));
+      const updatedBoxes = Array.isArray(actionPayload.boxes)
+        ? actionPayload.boxes
+        : (actionPayload.box ? [actionPayload.box] : []);
+      if (!updatedBoxes.length) {
+        return baseBoxes;
+      }
+      const updatedById = new Map(updatedBoxes.map((box) => [String(box.id), box]));
+      return baseBoxes.map((box) => updatedById.get(String(box.id)) || box);
     }
 
     if (
@@ -277,9 +282,14 @@ const ChatbotPanel = ({
       actionPayload.action === 'update_box_attributes' ||
       actionPayload.action === 'update_box_object_id'
     ) {
-      return baseBoxes.map((box) => (
-        String(box.id) === String(actionPayload.box.id) ? actionPayload.box : box
-      ));
+      const updatedBoxes = Array.isArray(actionPayload.boxes)
+        ? actionPayload.boxes
+        : (actionPayload.box ? [actionPayload.box] : []);
+      if (!updatedBoxes.length) {
+        return baseBoxes;
+      }
+      const updatedById = new Map(updatedBoxes.map((box) => [String(box.id), box]));
+      return baseBoxes.map((box) => updatedById.get(String(box.id)) || box);
     }
 
     if (actionPayload.action === 'delete_box') {

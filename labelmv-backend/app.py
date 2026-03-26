@@ -556,33 +556,53 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
         }
 
     if action_name == 'update_box_geometry':
-        box_id = action_payload.get('box_id')
+        requested_updates = action_payload.get('updates')
+        if isinstance(requested_updates, list):
+            if not requested_updates:
+                return None, {
+                    'success': False,
+                    'message': "update_box_geometry updates must be a non-empty array",
+                }
+            updates = requested_updates
+        else:
+            updates = [{
+                'box_id': action_payload.get('box_id'),
+                'bbox_1000': action_payload.get('bbox_1000'),
+            }]
 
-        bbox_backend, bbox_error = _agent_bbox_to_backend_box(action_payload.get('bbox_1000'))
-        if bbox_error:
-            return None, {
-                'success': False,
-                'message': bbox_error,
-            }
-
-        target_box_index, target_box, target_box_error = _find_target_box(
-            existing_boxes,
-            box_id,
-            'update_box_geometry',
-            frame_target,
-        )
-        if target_box_error:
-            return None, target_box_error
-
-        updated_box = {
-            **target_box,
-            'left': bbox_backend['left'],
-            'top': bbox_backend['top'],
-            'width': bbox_backend['width'],
-            'height': bbox_backend['height'],
-        }
+        updated_boxes = []
         next_boxes = list(existing_boxes)
-        next_boxes[target_box_index] = updated_box
+        for item_index, update_item in enumerate(updates):
+            if not isinstance(update_item, dict):
+                return None, {
+                    'success': False,
+                    'message': f"update_box_geometry item {item_index} must be an object",
+                }
+            box_id = update_item.get('box_id')
+            bbox_backend, bbox_error = _agent_bbox_to_backend_box(update_item.get('bbox_1000'))
+            if bbox_error:
+                return None, {
+                    'success': False,
+                    'message': f"update_box_geometry item {item_index}: {bbox_error}",
+                }
+            target_box_index, target_box, target_box_error = _find_target_box(
+                next_boxes,
+                box_id,
+                'update_box_geometry',
+                frame_target,
+            )
+            if target_box_error:
+                return None, target_box_error
+            updated_box = {
+                **target_box,
+                'left': bbox_backend['left'],
+                'top': bbox_backend['top'],
+                'width': bbox_backend['width'],
+                'height': bbox_backend['height'],
+            }
+            next_boxes[target_box_index] = updated_box
+            updated_boxes.append(updated_box)
+
         _saved_boxes, validation_error = _save_target_boxes(project, current_user, frame_target, next_boxes)
         if validation_error:
             return None, {
@@ -595,49 +615,72 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             'target_frame': target_frame,
             'video_index': frame_target['video_index'],
             'sample_index': frame_target['sample_index'],
-            'box': updated_box,
+            'box': updated_boxes[0] if len(updated_boxes) == 1 else None,
+            'boxes': updated_boxes,
         }, {
             'success': True,
             'message': (
-                f"Updated box geometry for box_id={box_id} in the {frame_target['label']} "
+                f"Updated geometry for {len(updated_boxes)} box(es) in the {frame_target['label']} "
                 f"(video_index={frame_target['video_index']}, sample_index={frame_target['sample_index']})"
             ),
             'action': 'update_box_geometry',
             'video_index': frame_target['video_index'],
             'sample_index': frame_target['sample_index'],
-            'box_id': updated_box['id'],
+            'box_id': updated_boxes[0]['id'] if len(updated_boxes) == 1 else None,
+            'box_ids': [box['id'] for box in updated_boxes],
         }
 
     if action_name == 'update_box_class':
-        box_id = action_payload.get('box_id')
-        class_name = action_payload.get('className')
-        if not isinstance(class_name, str) or not class_name.strip():
-            return None, {
-                'success': False,
-                'message': "update_box_class requires className",
-            }
-        class_name = class_name.strip()
-        if class_name not in (project.get('classes') or []):
-            return None, {
-                'success': False,
-                'message': f"update_box_class className '{class_name}' is not in project classes",
-            }
+        requested_updates = action_payload.get('updates')
+        if isinstance(requested_updates, list):
+            if not requested_updates:
+                return None, {
+                    'success': False,
+                    'message': "update_box_class updates must be a non-empty array",
+                }
+            updates = requested_updates
+        else:
+            updates = [{
+                'box_id': action_payload.get('box_id'),
+                'className': action_payload.get('className'),
+            }]
 
-        target_box_index, target_box, target_box_error = _find_target_box(
-            existing_boxes,
-            box_id,
-            'update_box_class',
-            frame_target,
-        )
-        if target_box_error:
-            return None, target_box_error
-
-        updated_box = {
-            **target_box,
-            'className': class_name,
-        }
+        updated_boxes = []
         next_boxes = list(existing_boxes)
-        next_boxes[target_box_index] = updated_box
+        for item_index, update_item in enumerate(updates):
+            if not isinstance(update_item, dict):
+                return None, {
+                    'success': False,
+                    'message': f"update_box_class item {item_index} must be an object",
+                }
+            box_id = update_item.get('box_id')
+            class_name = update_item.get('className')
+            if not isinstance(class_name, str) or not class_name.strip():
+                return None, {
+                    'success': False,
+                    'message': f"update_box_class item {item_index} requires className",
+                }
+            class_name = class_name.strip()
+            if class_name not in (project.get('classes') or []):
+                return None, {
+                    'success': False,
+                    'message': f"update_box_class item {item_index} className '{class_name}' is not in project classes",
+                }
+            target_box_index, target_box, target_box_error = _find_target_box(
+                next_boxes,
+                box_id,
+                'update_box_class',
+                frame_target,
+            )
+            if target_box_error:
+                return None, target_box_error
+            updated_box = {
+                **target_box,
+                'className': class_name,
+            }
+            next_boxes[target_box_index] = updated_box
+            updated_boxes.append(updated_box)
+
         _saved_boxes, validation_error = _save_target_boxes(project, current_user, frame_target, next_boxes)
         if validation_error:
             return None, {
@@ -650,70 +693,92 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             'target_frame': target_frame,
             'video_index': frame_target['video_index'],
             'sample_index': frame_target['sample_index'],
-            'box': updated_box,
+            'box': updated_boxes[0] if len(updated_boxes) == 1 else None,
+            'boxes': updated_boxes,
         }, {
             'success': True,
             'message': (
-                f"Updated class for box_id={box_id} to '{class_name}' in the {frame_target['label']} "
+                f"Updated class for {len(updated_boxes)} box(es) in the {frame_target['label']} "
                 f"(video_index={frame_target['video_index']}, sample_index={frame_target['sample_index']})"
             ),
             'action': 'update_box_class',
             'video_index': frame_target['video_index'],
             'sample_index': frame_target['sample_index'],
-            'box_id': updated_box['id'],
+            'box_id': updated_boxes[0]['id'] if len(updated_boxes) == 1 else None,
+            'box_ids': [box['id'] for box in updated_boxes],
         }
 
     if action_name == 'update_box_attributes':
-        box_id = action_payload.get('box_id')
-        attributes_update = action_payload.get('attributes')
-        if not isinstance(attributes_update, dict) or not attributes_update:
-            return None, {
-                'success': False,
-                'message': "update_box_attributes requires a non-empty attributes object",
-            }
+        requested_updates = action_payload.get('updates')
+        if isinstance(requested_updates, list):
+            if not requested_updates:
+                return None, {
+                    'success': False,
+                    'message': "update_box_attributes updates must be a non-empty array",
+                }
+            updates = requested_updates
+        else:
+            updates = [{
+                'box_id': action_payload.get('box_id'),
+                'attributes': action_payload.get('attributes'),
+            }]
 
         project_attributes = project.get('attributes') or {}
-        normalized_updates = {}
-        for attr_name, attr_value in attributes_update.items():
-            if attr_name not in project_attributes:
-                return None, {
-                    'success': False,
-                    'message': f"update_box_attributes unknown attribute name '{attr_name}'",
-                }
-            if attr_value is None:
-                attr_value = ''
-            if not isinstance(attr_value, str):
-                return None, {
-                    'success': False,
-                    'message': f"update_box_attributes value for '{attr_name}' must be a string",
-                }
-            if attr_value and attr_value not in project_attributes[attr_name]:
-                return None, {
-                    'success': False,
-                    'message': (
-                        f"update_box_attributes value '{attr_value}' is not supported for attribute '{attr_name}'"
-                    ),
-                }
-            normalized_updates[attr_name] = attr_value
-
-        target_box_index, target_box, target_box_error = _find_target_box(
-            existing_boxes,
-            box_id,
-            'update_box_attributes',
-            frame_target,
-        )
-        if target_box_error:
-            return None, target_box_error
-
-        updated_box = {
-            **target_box,
-            'attributes': {
-                **(target_box.get('attributes') or {}),
-                **normalized_updates,
-            },
-        }
+        updated_boxes = []
         next_boxes = list(existing_boxes)
-        next_boxes[target_box_index] = updated_box
+        for item_index, update_item in enumerate(updates):
+            if not isinstance(update_item, dict):
+                return None, {
+                    'success': False,
+                    'message': f"update_box_attributes item {item_index} must be an object",
+                }
+            box_id = update_item.get('box_id')
+            attributes_update = update_item.get('attributes')
+            if not isinstance(attributes_update, dict) or not attributes_update:
+                return None, {
+                    'success': False,
+                    'message': f"update_box_attributes item {item_index} requires a non-empty attributes object",
+                }
+            normalized_updates = {}
+            for attr_name, attr_value in attributes_update.items():
+                if attr_name not in project_attributes:
+                    return None, {
+                        'success': False,
+                        'message': f"update_box_attributes unknown attribute name '{attr_name}'",
+                    }
+                if attr_value is None:
+                    attr_value = ''
+                if not isinstance(attr_value, str):
+                    return None, {
+                        'success': False,
+                        'message': f"update_box_attributes value for '{attr_name}' must be a string",
+                    }
+                if attr_value and attr_value not in project_attributes[attr_name]:
+                    return None, {
+                        'success': False,
+                        'message': (
+                            f"update_box_attributes value '{attr_value}' is not supported for attribute '{attr_name}'"
+                        ),
+                    }
+                normalized_updates[attr_name] = attr_value
+            target_box_index, target_box, target_box_error = _find_target_box(
+                next_boxes,
+                box_id,
+                'update_box_attributes',
+                frame_target,
+            )
+            if target_box_error:
+                return None, target_box_error
+            updated_box = {
+                **target_box,
+                'attributes': {
+                    **(target_box.get('attributes') or {}),
+                    **normalized_updates,
+                },
+            }
+            next_boxes[target_box_index] = updated_box
+            updated_boxes.append(updated_box)
+
         _saved_boxes, validation_error = _save_target_boxes(project, current_user, frame_target, next_boxes)
         if validation_error:
             return None, {
@@ -726,50 +791,73 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             'target_frame': target_frame,
             'video_index': frame_target['video_index'],
             'sample_index': frame_target['sample_index'],
-            'box': updated_box,
+            'box': updated_boxes[0] if len(updated_boxes) == 1 else None,
+            'boxes': updated_boxes,
         }, {
             'success': True,
             'message': (
-                f"Updated attributes for box_id={box_id} in the {frame_target['label']} "
+                f"Updated attributes for {len(updated_boxes)} box(es) in the {frame_target['label']} "
                 f"(video_index={frame_target['video_index']}, sample_index={frame_target['sample_index']})"
             ),
             'action': 'update_box_attributes',
             'video_index': frame_target['video_index'],
             'sample_index': frame_target['sample_index'],
-            'box_id': updated_box['id'],
+            'box_id': updated_boxes[0]['id'] if len(updated_boxes) == 1 else None,
+            'box_ids': [box['id'] for box in updated_boxes],
         }
 
     if action_name == 'update_box_object_id':
-        box_id = action_payload.get('box_id')
-        object_id_raw = action_payload.get('objectId')
-        try:
-            object_id = int(object_id_raw)
-        except (TypeError, ValueError):
-            return None, {
-                'success': False,
-                'message': "update_box_object_id requires objectId to be an integer",
-            }
-        if object_id < 0:
-            return None, {
-                'success': False,
-                'message': "update_box_object_id requires objectId to be greater than or equal to 0",
-            }
+        requested_updates = action_payload.get('updates')
+        if isinstance(requested_updates, list):
+            if not requested_updates:
+                return None, {
+                    'success': False,
+                    'message': "update_box_object_id updates must be a non-empty array",
+                }
+            updates = requested_updates
+        else:
+            updates = [{
+                'box_id': action_payload.get('box_id'),
+                'objectId': action_payload.get('objectId'),
+            }]
 
-        target_box_index, target_box, target_box_error = _find_target_box(
-            existing_boxes,
-            box_id,
-            'update_box_object_id',
-            frame_target,
-        )
-        if target_box_error:
-            return None, target_box_error
-
-        updated_box = {
-            **target_box,
-            'objectId': object_id,
-        }
+        updated_boxes = []
         next_boxes = list(existing_boxes)
-        next_boxes[target_box_index] = updated_box
+        for item_index, update_item in enumerate(updates):
+            if not isinstance(update_item, dict):
+                return None, {
+                    'success': False,
+                    'message': f"update_box_object_id item {item_index} must be an object",
+                }
+            box_id = update_item.get('box_id')
+            object_id_raw = update_item.get('objectId')
+            try:
+                object_id = int(object_id_raw)
+            except (TypeError, ValueError):
+                return None, {
+                    'success': False,
+                    'message': f"update_box_object_id item {item_index} requires objectId to be an integer",
+                }
+            if object_id < 0:
+                return None, {
+                    'success': False,
+                    'message': f"update_box_object_id item {item_index} requires objectId to be greater than or equal to 0",
+                }
+            target_box_index, target_box, target_box_error = _find_target_box(
+                next_boxes,
+                box_id,
+                'update_box_object_id',
+                frame_target,
+            )
+            if target_box_error:
+                return None, target_box_error
+            updated_box = {
+                **target_box,
+                'objectId': object_id,
+            }
+            next_boxes[target_box_index] = updated_box
+            updated_boxes.append(updated_box)
+
         _saved_boxes, validation_error = _save_target_boxes(project, current_user, frame_target, next_boxes)
         if validation_error:
             return None, {
@@ -782,17 +870,19 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             'target_frame': target_frame,
             'video_index': frame_target['video_index'],
             'sample_index': frame_target['sample_index'],
-            'box': updated_box,
+            'box': updated_boxes[0] if len(updated_boxes) == 1 else None,
+            'boxes': updated_boxes,
         }, {
             'success': True,
             'message': (
-                f"Updated objectId for box_id={box_id} to {object_id} in the {frame_target['label']} "
+                f"Updated objectId for {len(updated_boxes)} box(es) in the {frame_target['label']} "
                 f"(video_index={frame_target['video_index']}, sample_index={frame_target['sample_index']})"
             ),
             'action': 'update_box_object_id',
             'video_index': frame_target['video_index'],
             'sample_index': frame_target['sample_index'],
-            'box_id': updated_box['id'],
+            'box_id': updated_boxes[0]['id'] if len(updated_boxes) == 1 else None,
+            'box_ids': [box['id'] for box in updated_boxes],
         }
 
     if action_name == 'delete_box':
