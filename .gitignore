@@ -5,6 +5,7 @@ videos/
 .venv/
 annotations/
 evaluation/
+pilot/
 *.DS_Store
 *.pt
 *.pyc
