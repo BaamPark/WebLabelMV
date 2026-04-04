@@ -11,3 +11,4 @@ pilot/
 *.pyc
 *.png
 *.ipynb
+train/
