@@ -12,7 +12,5 @@ pilot/
 *.png
 *.ipynb
 notes/
-pilot/
 tmp/
 train/
-evaluation/
