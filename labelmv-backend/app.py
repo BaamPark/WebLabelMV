@@ -15,6 +15,7 @@ import cv2
 import math
 import io
 import numpy as np
+import requests
 
 from agent_prompting import (
     build_contextual_chat_prompt,
@@ -42,6 +43,7 @@ app.config['MAX_CONTENT_LENGTH'] = max(
     int(os.environ.get('MAX_CONTENT_LENGTH', chatbot_config.max_image_bytes + 1024 * 1024))
 )
 chatbot_service = ChatbotProxyService(chatbot_config)
+ML_BACKEND_URL = os.environ.get('ML_BACKEND_URL', '').strip()
 
 # In-memory storage for annotations (for simplicity, will be replaced with database)
 annotations_storage = {}
@@ -419,6 +421,45 @@ def _save_target_boxes(project, current_user, frame_target, boxes):
     return normalized_boxes, None
 
 
+def _detect_objects_with_ml_backend(project, frame_target, class_name=None, max_detections=None):
+    if not ML_BACKEND_URL:
+        return None, "ML_BACKEND_URL is not configured"
+
+    try:
+        frame_bytes, _info = _read_frame_bytes(project, frame_target['video_index'], frame_target['sample_index'])
+    except ChatbotServiceError as error:
+        return None, error.message
+
+    files = {
+        'image': ('frame.jpg', frame_bytes, 'image/jpeg'),
+    }
+    data = {
+        'target_frame': frame_target['label'],
+    }
+    if isinstance(class_name, str) and class_name.strip():
+        data['class_name'] = class_name.strip()
+    if isinstance(max_detections, int) and max_detections > 0:
+        data['max_detections'] = str(max_detections)
+
+    try:
+        response = requests.post(ML_BACKEND_URL, files=files, data=data, timeout=300)
+    except requests.RequestException as error:
+        return None, f"detect_object request failed: {error}"
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+
+    if not response.ok:
+        return None, payload.get('error') or f"detect_object backend returned {response.status_code}"
+
+    detections = payload.get('detections')
+    if not isinstance(detections, list):
+        return None, "detect_object backend returned an invalid detections payload"
+    return detections, None
+
+
 def _find_target_box(existing_boxes, box_id, action_name, frame_target):
     if box_id is None or str(box_id).strip() == '':
         return None, None, {
@@ -469,6 +510,115 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
         }
 
     existing_boxes = _load_target_boxes(project, current_user, frame_target)
+
+    if action_name == 'detect_object':
+        class_name = action_payload.get('className')
+        if class_name is not None and (
+            not isinstance(class_name, str)
+            or (class_name.strip() and class_name.strip() not in (project.get('classes') or []))
+        ):
+            return None, {
+                'success': False,
+                'message': f"detect_object className '{class_name}' is not in project classes",
+            }
+
+        max_detections = action_payload.get('max_detections')
+        if max_detections is not None:
+            try:
+                max_detections = int(max_detections)
+            except (TypeError, ValueError):
+                return None, {
+                    'success': False,
+                    'message': "detect_object max_detections must be an integer",
+                }
+            if max_detections <= 0:
+                return None, {
+                    'success': False,
+                    'message': "detect_object max_detections must be greater than 0",
+                }
+
+        detections, detection_error = _detect_objects_with_ml_backend(
+            project,
+            frame_target,
+            class_name=class_name,
+            max_detections=max_detections,
+        )
+        if detection_error:
+            return None, {
+                'success': False,
+                'message': detection_error,
+            }
+
+        created_boxes = []
+        next_boxes = list(existing_boxes)
+        default_class_name = (class_name or '').strip()
+        for item_index, detection in enumerate(detections):
+            if not isinstance(detection, dict):
+                return None, {
+                    'success': False,
+                    'message': f"detect_object item {item_index} must be an object",
+                }
+
+            detected_class_name = (detection.get('className') or default_class_name).strip()
+            if not detected_class_name:
+                return None, {
+                    'success': False,
+                    'message': f"detect_object item {item_index} requires className",
+                }
+            if detected_class_name not in (project.get('classes') or []):
+                return None, {
+                    'success': False,
+                    'message': f"detect_object item {item_index} className '{detected_class_name}' is not in project classes",
+                }
+
+            bbox_backend, bbox_error = _agent_bbox_to_backend_box(detection.get('bbox_1000'))
+            if bbox_error:
+                return None, {
+                    'success': False,
+                    'message': f"detect_object item {item_index}: {bbox_error}",
+                }
+
+            new_box = {
+                'id': _generate_box_id(next_boxes),
+                'left': bbox_backend['left'],
+                'top': bbox_backend['top'],
+                'width': bbox_backend['width'],
+                'height': bbox_backend['height'],
+                'className': detected_class_name,
+                'objectId': 0,
+                'attributes': {name: '' for name in (project.get('attributes') or {}).keys()},
+            }
+            created_boxes.append(new_box)
+            next_boxes.append(new_box)
+
+        _saved_boxes, validation_error = _save_target_boxes(project, current_user, frame_target, next_boxes)
+        if validation_error:
+            return None, {
+                'success': False,
+                'message': validation_error,
+            }
+
+        return {
+            'action': 'detect_object',
+            'target_frame': target_frame,
+            'video_index': frame_target['video_index'],
+            'sample_index': frame_target['sample_index'],
+            'detections': detections,
+            'box': created_boxes[0] if len(created_boxes) == 1 else None,
+            'boxes': created_boxes,
+        }, {
+            'success': True,
+            'message': (
+                f"Detected and created {len(created_boxes)} box(es) in the {frame_target['label']} "
+                f"(video_index={frame_target['video_index']}, sample_index={frame_target['sample_index']})"
+            ),
+            'action': 'detect_object',
+            'video_index': frame_target['video_index'],
+            'sample_index': frame_target['sample_index'],
+            'detections': detections,
+            'box_id': created_boxes[0]['id'] if len(created_boxes) == 1 else None,
+            'box_ids': [box['id'] for box in created_boxes],
+        }
 
     if action_name == 'create_box':
         requested_boxes = action_payload.get('boxes')
