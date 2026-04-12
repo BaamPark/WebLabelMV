@@ -259,7 +259,7 @@ const ChatbotPanel = ({
       return baseBoxes;
     }
 
-    if (actionPayload.action === 'create_box') {
+    if (actionPayload.action === 'create_box' || actionPayload.action === 'detect_object') {
       const createdBoxes = Array.isArray(actionPayload.boxes)
         ? actionPayload.boxes
         : (actionPayload.box ? [actionPayload.box] : []);
