@@ -1195,6 +1195,45 @@ def _render_current_frame_overlay(frame_bytes, boxes):
     return buf.tobytes()
 
 
+def _crop_frame_to_box(frame_bytes, box, padding_ratio=0.05):
+    image_array = cv2.imdecode(np.frombuffer(frame_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image_array is None:
+        raise ChatbotServiceError("Failed to decode frame for crop rendering", status_code=500)
+
+    image_h, image_w = image_array.shape[:2]
+    try:
+        left = float(box.get('left', 0.0))
+        top = float(box.get('top', 0.0))
+        width = float(box.get('width', 0.0))
+        height = float(box.get('height', 0.0))
+    except (TypeError, ValueError):
+        raise ChatbotServiceError("Selected box geometry is invalid", status_code=400)
+
+    x1 = int(round(left * image_w))
+    y1 = int(round(top * image_h))
+    x2 = int(round((left + width) * image_w))
+    y2 = int(round((top + height) * image_h))
+
+    if x2 <= x1 or y2 <= y1:
+        raise ChatbotServiceError("Selected box geometry is empty", status_code=400)
+
+    pad_x = int(round((x2 - x1) * padding_ratio))
+    pad_y = int(round((y2 - y1) * padding_ratio))
+    crop_x1 = max(0, x1 - pad_x)
+    crop_y1 = max(0, y1 - pad_y)
+    crop_x2 = min(image_w, x2 + pad_x)
+    crop_y2 = min(image_h, y2 + pad_y)
+
+    if crop_x2 <= crop_x1 or crop_y2 <= crop_y1:
+        raise ChatbotServiceError("Selected box crop is empty", status_code=400)
+
+    cropped = image_array[crop_y1:crop_y2, crop_x1:crop_x2]
+    ok, buf = cv2.imencode('.jpg', cropped)
+    if not ok:
+        raise ChatbotServiceError("Failed to encode cropped frame", status_code=500)
+    return buf.tobytes()
+
+
 def _describe_image_relationship(target_scope, source_video_index, target_video_index, project):
     if target_scope == 'previous_current_view':
         return 'the previous frame from the current view'
@@ -1415,21 +1454,27 @@ def chatbot(current_user):
                 source_sample_index,
             )
 
-        try:
-            source_overlay_bytes = _render_current_frame_overlay(source_frame_bytes, source_boxes)
-        except ChatbotServiceError as error:
-            return jsonify({"error": error.message}), error.status_code
-
-        contextual_images = [{
-            'bytes': source_overlay_bytes,
-            'mime_type': 'image/jpeg',
-            'filename': f"source_view_{source_video_index}_frame_{source_sample_index}_overlay.jpg",
-        }]
         boxes_for_current_frame = serialize_boxes_for_prompt(source_boxes)
         target_box = None
         selected_boxes = serialize_boxes_for_prompt(select_box_subset(source_boxes, target_box_id))
         if target_box_id not in (None, '', 'none'):
             target_box = selected_boxes[0] if selected_boxes else None
+        source_image_bytes = source_frame_bytes
+        source_filename = f"source_view_{source_video_index}_frame_{source_sample_index}.jpg"
+        if target_box is not None:
+            selected_source_boxes = select_box_subset(source_boxes, target_box_id)
+            selected_source_box = selected_source_boxes[0] if selected_source_boxes else None
+            if selected_source_box is not None:
+                try:
+                    source_image_bytes = _crop_frame_to_box(source_frame_bytes, selected_source_box)
+                    source_filename = f"source_view_{source_video_index}_frame_{source_sample_index}_crop.jpg"
+                except ChatbotServiceError as error:
+                    return jsonify({"error": error.message}), error.status_code
+        contextual_images = [{
+            'bytes': source_image_bytes,
+            'mime_type': 'image/jpeg',
+            'filename': source_filename,
+        }]
         image_relationship_text = None
 
         if target_scope != 'none':
@@ -1450,11 +1495,6 @@ def chatbot(current_user):
                 target_video_index,
                 target_sample_index,
             )
-            try:
-                target_overlay_bytes = _render_current_frame_overlay(target_frame_bytes, target_boxes)
-            except ChatbotServiceError as error:
-                return jsonify({"error": error.message}), error.status_code
-
             has_additional_frame = True
             image_relationship_text = _describe_image_relationship(
                 target_scope,
@@ -1463,9 +1503,9 @@ def chatbot(current_user):
                 project,
             )
             contextual_images.append({
-                'bytes': target_overlay_bytes,
+                'bytes': target_frame_bytes,
                 'mime_type': 'image/jpeg',
-                'filename': f"target_view_{target_video_index}_frame_{target_sample_index}_overlay.jpg",
+                'filename': f"target_view_{target_video_index}_frame_{target_sample_index}.jpg",
             })
 
         remaining_history = normalized_chat_history
@@ -1478,6 +1518,7 @@ def chatbot(current_user):
             project,
             image_relationship_text=image_relationship_text,
             boxes_for_current_frame=boxes_for_current_frame,
+            has_selected_box_crop=(target_box is not None),
         )
         ollama_messages = [{
             'role': 'user',
