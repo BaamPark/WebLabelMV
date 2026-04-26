@@ -15,6 +15,8 @@ export CHATBOT_SEED="42"
 export CHATBOT_TEMPERATURE="0.8"
 export CHATBOT_MAX_IMAGE_BYTES="10485760"
 export ML_BACKEND_URL="http://host.docker.internal:8001/detect"
+export AGENT_INPUT_IMAGE_DUMP="true"
+export AGENT_INPUT_IMAGE_DUMP_DIR="/app/tmp"
 # Set to "true" to log both the grounded first agent call and the post-tool follow-up call.
 export AGENT_INPUT_LOGGING="true"
 
