@@ -28,6 +28,8 @@ services:
       - CHATBOT_MAX_IMAGE_BYTES=${CHATBOT_MAX_IMAGE_BYTES:-5242880}
       - ML_BACKEND_URL=${ML_BACKEND_URL:-}
       - AGENT_INPUT_LOGGING=${AGENT_INPUT_LOGGING:-false}
+      - AGENT_INPUT_IMAGE_DUMP=${AGENT_INPUT_IMAGE_DUMP:-false}
+      - AGENT_INPUT_IMAGE_DUMP_DIR=${AGENT_INPUT_IMAGE_DUMP_DIR:-/app/tmp}
     depends_on:
       - mongo
     extra_hosts:
@@ -35,6 +37,7 @@ services:
     volumes:
       # Mount videos from host to container; point your project to /app/videos
       - ./videos:/app/videos:ro
+      - ./tmp:/app/tmp
     ports:
       - "56250:56250"
 

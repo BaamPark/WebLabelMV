@@ -1,6 +1,8 @@
 import base64
+import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import quote
 
 import requests
@@ -35,6 +37,8 @@ class ChatbotConfig:
     base_url: str
     request_path: str
     api_key: str
+    site_url: str
+    site_title: str
     model_id: str
     timeout_seconds: int
     max_tokens: int
@@ -51,6 +55,8 @@ def load_chatbot_config():
         base_url=os.environ.get("CHATBOT_BASE_URL", "http://host.docker.internal:11434").strip(),
         request_path=os.environ.get("CHATBOT_REQUEST_PATH", "/api/chat").strip() or "/api/chat",
         api_key=os.environ.get("CHATBOT_API_KEY", "").strip(),
+        site_url=os.environ.get("CHATBOT_SITE_URL", "").strip(),
+        site_title=os.environ.get("CHATBOT_SITE_TITLE", "").strip(),
         model_id=os.environ.get("CHATBOT_MODEL", DEFAULT_MODEL_ID).strip() or DEFAULT_MODEL_ID,
         timeout_seconds=max(10, _read_int_env("CHATBOT_TIMEOUT_SECONDS", 180)),
         max_tokens=max(32, _read_int_env("CHATBOT_MAX_TOKENS", 256)),
@@ -132,6 +138,11 @@ class ChatbotProxyService:
                 headers["x-goog-api-key"] = self.config.api_key
             else:
                 headers["Authorization"] = f"Bearer {self.config.api_key}"
+        if self.config.provider == "openrouter":
+            if self.config.site_url:
+                headers["HTTP-Referer"] = self.config.site_url
+            if self.config.site_title:
+                headers["X-OpenRouter-Title"] = self.config.site_title
         return headers
 
     def _normalized_ollama_think(self):
@@ -165,6 +176,32 @@ class ChatbotProxyService:
                 "input": input_items,
                 "max_output_tokens": self.config.max_tokens,
             }
+
+        if self.config.provider == "openrouter":
+            openrouter_messages = []
+            for message in messages:
+                content = [{"type": "text", "text": message["content"]}]
+                for image in message.get("images") or []:
+                    image_b64 = base64.b64encode(image["bytes"]).decode("utf-8")
+                    content.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{image['mime_type']};base64,{image_b64}",
+                        },
+                    })
+                openrouter_messages.append({
+                    "role": message["role"],
+                    "content": content,
+                })
+            payload = {
+                "model": self.config.model_id,
+                "messages": openrouter_messages,
+                "max_tokens": self.config.max_tokens,
+                "temperature": self.config.temperature,
+            }
+            if self.config.seed is not None:
+                payload["seed"] = self.config.seed
+            return payload
 
         if self.config.provider == "google_genai":
             contents = []
@@ -232,6 +269,22 @@ class ChatbotProxyService:
                         texts.append(content["text"])
             return "\n".join(texts).strip()
 
+        if self.config.provider == "openrouter":
+            choices = data.get("choices") or []
+            if not choices:
+                return ""
+            message = (choices[0].get("message") or {})
+            content = message.get("content")
+            if isinstance(content, str):
+                return content.strip()
+            if isinstance(content, list):
+                texts = []
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text" and item.get("text"):
+                        texts.append(item["text"])
+                return "\n".join(texts).strip()
+            return ""
+
         if self.config.provider == "google_genai":
             candidates = data.get("candidates") or []
             if not candidates:
@@ -266,10 +319,51 @@ class ChatbotProxyService:
             normalized.append(message)
         return normalized
 
+    def _dump_latest_messages(self, messages):
+        enabled = os.environ.get("AGENT_INPUT_IMAGE_DUMP", "").strip().lower() in {"1", "true", "yes", "on"}
+        if not enabled:
+            return
+
+        dump_dir = Path(os.environ.get("AGENT_INPUT_IMAGE_DUMP_DIR", "/tmp")).resolve()
+        dump_dir.mkdir(parents=True, exist_ok=True)
+
+        sanitized_messages = []
+        latest_images = []
+        for message in messages:
+            entry = {
+                "role": message.get("role"),
+                "content": message.get("content"),
+                "images": [],
+            }
+            for image in message.get("images") or []:
+                filename = image.get("filename") or "image.jpg"
+                entry["images"].append({
+                    "filename": filename,
+                    "mime_type": image.get("mime_type"),
+                    "bytes": len(image.get("bytes") or b""),
+                })
+                latest_images.append((filename, image.get("bytes") or b""))
+            sanitized_messages.append(entry)
+
+        (dump_dir / "agent_latest_messages.json").write_text(
+            json.dumps(sanitized_messages, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        for index in range(2):
+            image_path = dump_dir / f"agent_latest_image_{index + 1}.jpg"
+            if index < len(latest_images):
+                _filename, image_bytes = latest_images[index]
+                image_path.write_bytes(image_bytes)
+            elif image_path.exists():
+                image_path.unlink()
+
     def generate_reply(self, messages):
         normalized_messages = self._normalize_messages(messages)
         if not normalized_messages:
             raise ChatbotServiceError("at least one message is required", status_code=400)
+
+        self._dump_latest_messages(normalized_messages)
 
         payload = self._build_request(normalized_messages)
 
@@ -296,5 +390,21 @@ class ChatbotProxyService:
 
         reply = self._extract_reply(data)
         if not reply:
+            try:
+                print(
+                    "CHATBOT_EMPTY_RESPONSE "
+                    + json.dumps(
+                        {
+                            "provider": self.config.provider,
+                            "model": self.config.model_id,
+                            "url": self._request_url(),
+                            "response_json": data,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+            except Exception:
+                pass
             raise ChatbotServiceError("chatbot server returned an empty response", status_code=502)
         return reply

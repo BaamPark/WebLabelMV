@@ -12,3 +12,4 @@ pilot/
 *.png
 *.ipynb
 train/
+tmp/
