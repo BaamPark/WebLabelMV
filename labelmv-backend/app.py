@@ -7,6 +7,7 @@ import secrets
 import json
 import jwt
 import datetime
+import re
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_pymongo import PyMongo
 from functools import wraps
@@ -1110,6 +1111,137 @@ def _build_tool_result_message(action_payload, action_result):
     }, ensure_ascii=False)
 
 
+def _should_use_attribute_subagents(user_text, project, target_box):
+    if target_box is None:
+        return False
+    if not isinstance(project.get('attributes'), dict) or not project.get('attributes'):
+        return False
+    normalized = (user_text or '').strip().lower()
+    if not normalized:
+        return False
+    return (
+        'attribute' in normalized
+        or 'attributes' in normalized
+        or 'classify' in normalized
+    )
+
+
+def _extract_json_object(text):
+    if not isinstance(text, str) or not text.strip():
+        return None
+    stripped = text.strip()
+    fenced = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', stripped, flags=re.DOTALL | re.IGNORECASE)
+    candidates = [fenced.group(1)] if fenced else []
+    first = stripped.find('{')
+    last = stripped.rfind('}')
+    if first >= 0 and last > first:
+        candidates.append(stripped[first:last + 1])
+    candidates.append(stripped)
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _build_attribute_subagent_prompt(attribute_name, options, descriptions, selected_box):
+    option_lines = []
+    for code in options:
+        description = descriptions.get(code) if isinstance(descriptions, dict) else None
+        if description:
+            option_lines.append(f"- {code}: {description}")
+        else:
+            option_lines.append(f"- {code}")
+
+    visibility_instruction = ''
+    lower_name = attribute_name.lower()
+    if lower_name in {'glove-l', 'glove_l', 'glove-left', 'glove_left'}:
+        visibility_instruction = (
+            "First decide whether the selected clinician's anatomical left hand is clearly visible. "
+            "If it is not clearly visible and NA is an available option, choose NA. "
+            "Do not infer left glove status from the right hand."
+        )
+    elif lower_name in {'glove-r', 'glove_r', 'glove-right', 'glove_right'}:
+        visibility_instruction = (
+            "First decide whether the selected clinician's anatomical right hand is clearly visible. "
+            "If it is not clearly visible and NA is an available option, choose NA. "
+            "Do not infer right glove status from the left hand."
+        )
+    elif 'mask' in lower_name:
+        visibility_instruction = (
+            "Focus on the selected clinician's face and mask region. "
+            "If the face or mask is not clearly visible and NA is an available option, choose NA."
+        )
+    elif 'eyewear' in lower_name:
+        visibility_instruction = (
+            "Focus on the selected clinician's eye, forehead, and eyewear region. "
+            "If the relevant region is not clearly visible and NA is an available option, choose NA."
+        )
+    elif 'gown' in lower_name:
+        visibility_instruction = "Focus on the selected clinician's torso and gown coverage."
+
+    return (
+        "You are an attribute-specific visual annotation subagent.\n"
+        "Image 1 is a full frame where pixels outside the selected box are masked black. "
+        "Only classify the selected clinician inside the visible unmasked region.\n\n"
+        f"Selected box context JSON:\n{json.dumps(selected_box, ensure_ascii=False, indent=2)}\n\n"
+        f"Task: classify exactly one attribute: {attribute_name}\n"
+        f"Allowed labels:\n" + "\n".join(option_lines) + "\n\n"
+        f"{visibility_instruction}\n\n"
+        "Return only compact valid JSON with this exact schema: "
+        f"{{\"attribute\":\"{attribute_name}\",\"value\":\"<one allowed label>\",\"reason\":\"<short visual reason>\"}}"
+    )
+
+
+def _run_attribute_subagents(project, selected_box, contextual_images):
+    attributes = project.get('attributes') or {}
+    descriptions_by_attribute = project.get('attribute_descriptions') or {}
+    predictions = {}
+    replies = []
+
+    for attribute_name, raw_options in attributes.items():
+        if not isinstance(attribute_name, str) or not isinstance(raw_options, list):
+            continue
+        options = [str(option) for option in raw_options if isinstance(option, (str, int, float))]
+        if not options:
+            continue
+        prompt = _build_attribute_subagent_prompt(
+            attribute_name,
+            options,
+            descriptions_by_attribute.get(attribute_name) or {},
+            selected_box,
+        )
+        messages = [{
+            'role': 'user',
+            'content': prompt,
+            'images': contextual_images,
+        }]
+        reply = chatbot_service.generate_reply(messages=messages)
+        parsed = _extract_json_object(reply)
+        value = parsed.get('value') if isinstance(parsed, dict) else None
+        if isinstance(value, str):
+            value = value.strip()
+        if value not in options:
+            raise ChatbotServiceError(
+                f"attribute subagent for {attribute_name} returned invalid value {value!r}",
+                status_code=502,
+            )
+        predictions[attribute_name] = value
+        replies.append({
+            'attribute': attribute_name,
+            'value': value,
+            'reply': reply,
+            'parsed': parsed,
+        })
+
+    if not predictions:
+        raise ChatbotServiceError("attribute subagents produced no predictions", status_code=502)
+    return predictions, replies
+
+
 def _read_frame_bytes(project, video_index, sample_index):
     info, err = _video_info_for(project, video_index)
     if err:
@@ -1556,6 +1688,70 @@ def chatbot(current_user):
             "type": "status",
             "message": "Waiting for response",
         }) + "\n"
+
+        if project_id and _should_use_attribute_subagents(text, project, target_box):
+            yield json.dumps({
+                "type": "status",
+                "message": "Running attribute subagents",
+            }) + "\n"
+
+            try:
+                predicted_attributes, subagent_replies = _run_attribute_subagents(
+                    project,
+                    target_box,
+                    contextual_images,
+                )
+            except ChatbotServiceError as error:
+                yield json.dumps({
+                    "type": "error",
+                    "error": error.message,
+                    "status_code": error.status_code,
+                }) + "\n"
+                return
+
+            action_payload = {
+                'action': 'update_box_attributes',
+                'target_frame': 'current',
+                'box_id': target_box.get('boxId'),
+                'attributes': predicted_attributes,
+            }
+            yield json.dumps({
+                "type": "status",
+                "message": "Executing tools",
+            }) + "\n"
+            executed_action, action_result = _execute_agent_action(
+                action_payload,
+                project,
+                current_user,
+                source_video_index,
+                source_sample_index,
+                target_scope,
+                target_video_index,
+                target_sample_index,
+            )
+            if not action_result or not action_result.get('success'):
+                yield json.dumps({
+                    "type": "error",
+                    "error": (action_result or {}).get('message') or "attribute subagent action failed",
+                    "status_code": 500,
+                }) + "\n"
+                return
+
+            final_reply = (
+                f"Updated attributes for the selected box using attribute-specific subagents: "
+                f"{json.dumps(predicted_attributes, ensure_ascii=False)}"
+            )
+            yield json.dumps({
+                "type": "result",
+                "reply": final_reply,
+                "model": chatbot_config.model_id,
+                "provider": chatbot_config.provider,
+                "baseUrl": chatbot_config.base_url,
+                "action": executed_action,
+                "actionResult": action_result,
+                "subagentResults": subagent_replies,
+            }, ensure_ascii=False) + "\n"
+            return
 
         try:
             reply = chatbot_service.generate_reply(
