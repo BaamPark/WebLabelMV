@@ -70,7 +70,10 @@ def build_contextual_chat_prompt(project, image_relationship_text=None,
         payload['boxes_for_current_frame'] = boxes_for_current_frame
 
     if has_selected_box_crop:
-        image_order = "Image order:\n- Image 1: cropped current-frame view around the selected box\n"
+        image_order = (
+            "Image order:\n"
+            "- Image 1: full current frame with pixels outside the selected box masked black\n"
+        )
     else:
         image_order = "Image order:\n- Image 1: current frame\n"
     if image_relationship_text:
