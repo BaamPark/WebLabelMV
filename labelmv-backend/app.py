@@ -1195,10 +1195,10 @@ def _render_current_frame_overlay(frame_bytes, boxes):
     return buf.tobytes()
 
 
-def _crop_frame_to_box(frame_bytes, box, padding_ratio=0.05):
+def _mask_frame_to_box(frame_bytes, box):
     image_array = cv2.imdecode(np.frombuffer(frame_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
     if image_array is None:
-        raise ChatbotServiceError("Failed to decode frame for crop rendering", status_code=500)
+        raise ChatbotServiceError("Failed to decode frame for selected-box masking", status_code=500)
 
     image_h, image_w = image_array.shape[:2]
     try:
@@ -1217,20 +1217,18 @@ def _crop_frame_to_box(frame_bytes, box, padding_ratio=0.05):
     if x2 <= x1 or y2 <= y1:
         raise ChatbotServiceError("Selected box geometry is empty", status_code=400)
 
-    pad_x = int(round((x2 - x1) * padding_ratio))
-    pad_y = int(round((y2 - y1) * padding_ratio))
-    crop_x1 = max(0, x1 - pad_x)
-    crop_y1 = max(0, y1 - pad_y)
-    crop_x2 = min(image_w, x2 + pad_x)
-    crop_y2 = min(image_h, y2 + pad_y)
+    x1 = max(0, min(image_w - 1, x1))
+    y1 = max(0, min(image_h - 1, y1))
+    x2 = max(0, min(image_w, x2))
+    y2 = max(0, min(image_h, y2))
+    if x2 <= x1 or y2 <= y1:
+        raise ChatbotServiceError("Selected box geometry is outside the frame", status_code=400)
 
-    if crop_x2 <= crop_x1 or crop_y2 <= crop_y1:
-        raise ChatbotServiceError("Selected box crop is empty", status_code=400)
-
-    cropped = image_array[crop_y1:crop_y2, crop_x1:crop_x2]
-    ok, buf = cv2.imencode('.jpg', cropped)
+    masked = np.zeros_like(image_array)
+    masked[y1:y2, x1:x2] = image_array[y1:y2, x1:x2]
+    ok, buf = cv2.imencode('.jpg', masked)
     if not ok:
-        raise ChatbotServiceError("Failed to encode cropped frame", status_code=500)
+        raise ChatbotServiceError("Failed to encode selected-box masked frame", status_code=500)
     return buf.tobytes()
 
 
@@ -1466,8 +1464,8 @@ def chatbot(current_user):
             selected_source_box = selected_source_boxes[0] if selected_source_boxes else None
             if selected_source_box is not None:
                 try:
-                    source_image_bytes = _crop_frame_to_box(source_frame_bytes, selected_source_box)
-                    source_filename = f"source_view_{source_video_index}_frame_{source_sample_index}_crop.jpg"
+                    source_image_bytes = _mask_frame_to_box(source_frame_bytes, selected_source_box)
+                    source_filename = f"source_view_{source_video_index}_frame_{source_sample_index}_selected_mask.jpg"
                 except ChatbotServiceError as error:
                     return jsonify({"error": error.message}), error.status_code
         contextual_images = [{
