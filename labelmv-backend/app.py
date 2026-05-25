@@ -877,79 +877,15 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
 
         project_attributes = project.get('attributes') or {}
         updated_boxes = []
-        subagent_results_by_box = {}
         next_boxes = list(existing_boxes)
         for item_index, update_item in enumerate(updates):
             if not isinstance(update_item, dict):
                 return None, {
                     'success': False,
                     'message': f"update_box_attributes item {item_index} must be an object",
-                }
+            }
             box_id = update_item.get('box_id')
             attributes_update = update_item.get('attributes')
-            subagent_results = None
-            if attributes_update == 'auto' or isinstance(attributes_update, list):
-                if target_frame != 'current':
-                    return None, {
-                        'success': False,
-                        'message': "update_box_attributes automatic classification currently supports target_frame='current' only",
-                    }
-                if selected_box_for_tool is None:
-                    return None, {
-                        'success': False,
-                        'message': "update_box_attributes automatic classification requires a selected box in the current turn",
-                    }
-                if box_id is None or str(box_id).strip() == '':
-                    return None, {
-                        'success': False,
-                        'message': "update_box_attributes automatic classification requires box_id",
-                    }
-                if str(box_id) != str(selected_box_for_tool.get('boxId')):
-                    return None, {
-                        'success': False,
-                        'message': (
-                            "update_box_attributes automatic classification can only classify the selected box shown in Image 1; "
-                            f"requested box_id '{box_id}' but selected box is '{selected_box_for_tool.get('boxId')}'"
-                        ),
-                    }
-                if not contextual_images:
-                    return None, {
-                        'success': False,
-                        'message': "update_box_attributes automatic classification requires the selected-box image context",
-                    }
-                requested_attributes = None
-                if isinstance(attributes_update, list):
-                    if not attributes_update:
-                        return None, {
-                            'success': False,
-                            'message': "update_box_attributes automatic classification attribute list must be non-empty",
-                        }
-                    unknown_attributes = [
-                        str(item)
-                        for item in attributes_update
-                        if str(item) not in project_attributes
-                    ]
-                    if unknown_attributes:
-                        return None, {
-                            'success': False,
-                            'message': (
-                                "update_box_attributes automatic classification unknown attribute name(s): "
-                                + ", ".join(unknown_attributes)
-                            ),
-                        }
-                    requested_attributes = attributes_update
-                try:
-                    attributes_update, subagent_results = _run_attribute_subagents(
-                        project,
-                        selected_box_for_tool,
-                        contextual_images,
-                        requested_attributes=requested_attributes,
-                    )
-                except ChatbotServiceError as error:
-                    return None, {
-                        'success': False,
-                        'message': error.message,
-                    }
             if not isinstance(attributes_update, dict) or not attributes_update:
                 return None, {
                     'success': False,
@@ -994,8 +930,6 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             }
             next_boxes[target_box_index] = updated_box
             updated_boxes.append(updated_box)
-            if subagent_results is not None:
-                subagent_results_by_box[str(box_id)] = subagent_results
 
         _saved_boxes, validation_error = _save_target_boxes(project, current_user, frame_target, next_boxes)
         if validation_error:
@@ -1012,8 +946,6 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             'box': updated_boxes[0] if len(updated_boxes) == 1 else None,
             'boxes': updated_boxes,
         }
-        if subagent_results_by_box:
-            executed_payload['subagent_results'] = subagent_results_by_box
 
         return executed_payload, {
             'success': True,
@@ -1026,7 +958,6 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             'sample_index': frame_target['sample_index'],
             'box_id': updated_boxes[0]['id'] if len(updated_boxes) == 1 else None,
             'box_ids': [box['id'] for box in updated_boxes],
-            **({'subagent_results': subagent_results_by_box} if subagent_results_by_box else {}),
         }
 
     if action_name == 'update_box_object_id':
@@ -1181,103 +1112,6 @@ def _build_tool_result_message(action_payload, action_result):
             'Otherwise, answer the user directly.'
         ),
     }, ensure_ascii=False)
-
-
-def _extract_json_object(text):
-    if not isinstance(text, str) or not text.strip():
-        return None
-    stripped = text.strip()
-    fenced = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', stripped, flags=re.DOTALL | re.IGNORECASE)
-    candidates = [fenced.group(1)] if fenced else []
-    first = stripped.find('{')
-    last = stripped.rfind('}')
-    if first >= 0 and last > first:
-        candidates.append(stripped[first:last + 1])
-    candidates.append(stripped)
-    for candidate in candidates:
-        try:
-            parsed = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            return parsed
-    return None
-
-
-def _build_attribute_subagent_prompt(attribute_name, options, descriptions, selected_box):
-    option_lines = []
-    for code in options:
-        description = descriptions.get(code) if isinstance(descriptions, dict) else None
-        if description:
-            option_lines.append(f"- {code}: {description}")
-        else:
-            option_lines.append(f"- {code}")
-
-    return (
-        "You are an attribute-specific visual annotation subagent.\n"
-        "Image 1 is a full frame where pixels outside the selected box are masked black. "
-        "Only classify the selected clinician inside the visible unmasked region.\n\n"
-        f"Selected box context JSON:\n{json.dumps(selected_box, ensure_ascii=False, indent=2)}\n\n"
-        f"Task: classify exactly one attribute: {attribute_name}\n"
-        f"Allowed labels:\n" + "\n".join(option_lines) + "\n\n"
-        "Use the attribute name, allowed labels, and label descriptions to determine what visual "
-        "evidence is required. If the required visual evidence is not clearly visible, choose the "
-        "allowed label whose description best matches uncertainty, occlusion, or not-applicable "
-        "status. Do not infer missing evidence from context or from other body parts.\n\n"
-        "Return only compact valid JSON with this exact schema: "
-        f"{{\"attribute\":\"{attribute_name}\",\"value\":\"<one allowed label>\",\"reason\":\"<short visual reason>\"}}"
-    )
-
-
-def _run_attribute_subagents(project, selected_box, contextual_images, requested_attributes=None):
-    attributes = project.get('attributes') or {}
-    descriptions_by_attribute = project.get('attribute_descriptions') or {}
-    predictions = {}
-    replies = []
-    requested_set = None
-    if isinstance(requested_attributes, list) and requested_attributes:
-        requested_set = {str(item) for item in requested_attributes if isinstance(item, (str, int, float))}
-
-    for attribute_name, raw_options in attributes.items():
-        if requested_set is not None and attribute_name not in requested_set:
-            continue
-        if not isinstance(attribute_name, str) or not isinstance(raw_options, list):
-            continue
-        options = [str(option) for option in raw_options if isinstance(option, (str, int, float))]
-        if not options:
-            continue
-        prompt = _build_attribute_subagent_prompt(
-            attribute_name,
-            options,
-            descriptions_by_attribute.get(attribute_name) or {},
-            selected_box,
-        )
-        messages = [{
-            'role': 'user',
-            'content': prompt,
-            'images': contextual_images,
-        }]
-        reply = chatbot_service.generate_reply(messages=messages)
-        parsed = _extract_json_object(reply)
-        value = parsed.get('value') if isinstance(parsed, dict) else None
-        if isinstance(value, str):
-            value = value.strip()
-        if value not in options:
-            raise ChatbotServiceError(
-                f"attribute subagent for {attribute_name} returned invalid value {value!r}",
-                status_code=502,
-            )
-        predictions[attribute_name] = value
-        replies.append({
-            'attribute': attribute_name,
-            'value': value,
-            'reply': reply,
-            'parsed': parsed,
-        })
-
-    if not predictions:
-        raise ChatbotServiceError("attribute subagents produced no predictions", status_code=502)
-    return predictions, replies
 
 
 def _read_frame_bytes(project, video_index, sample_index):
