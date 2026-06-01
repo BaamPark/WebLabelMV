@@ -863,10 +863,10 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
     if action_name == 'update_box_attributes':
         requested_updates = action_payload.get('updates')
         if isinstance(requested_updates, list):
-            if not requested_updates:
+            if len(requested_updates) != 1:
                 return None, {
                     'success': False,
-                    'message': "update_box_attributes updates must be a non-empty array",
+                    'message': "update_box_attributes subagent classification supports exactly one selected box per action",
                 }
             updates = requested_updates
         else:
@@ -883,36 +883,38 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
                 return None, {
                     'success': False,
                     'message': f"update_box_attributes item {item_index} must be an object",
-            }
+                }
             box_id = update_item.get('box_id')
-            attributes_update = update_item.get('attributes')
-            if not isinstance(attributes_update, dict) or not attributes_update:
+            if box_id in (None, '') and selected_box_for_tool is not None:
+                box_id = selected_box_for_tool.get('boxId')
+            if target_frame != 'current':
                 return None, {
                     'success': False,
-                    'message': f"update_box_attributes item {item_index} requires a non-empty attributes object",
+                    'message': "update_box_attributes subagent classification currently supports target_frame='current' only",
                 }
-            normalized_updates = {}
-            for attr_name, attr_value in attributes_update.items():
-                if attr_name not in project_attributes:
-                    return None, {
-                        'success': False,
-                        'message': f"update_box_attributes unknown attribute name '{attr_name}'",
-                    }
-                if attr_value is None:
-                    attr_value = ''
-                if not isinstance(attr_value, str):
-                    return None, {
-                        'success': False,
-                        'message': f"update_box_attributes value for '{attr_name}' must be a string",
-                    }
-                if attr_value and attr_value not in project_attributes[attr_name]:
-                    return None, {
-                        'success': False,
-                        'message': (
-                            f"update_box_attributes value '{attr_value}' is not supported for attribute '{attr_name}'"
-                        ),
-                    }
-                normalized_updates[attr_name] = attr_value
+            if selected_box_for_tool is None:
+                return None, {
+                    'success': False,
+                    'message': "update_box_attributes subagent classification requires a selected box in the current turn",
+                }
+            if box_id is None or str(box_id).strip() == '':
+                return None, {
+                    'success': False,
+                    'message': "update_box_attributes subagent classification requires box_id",
+                }
+            if str(box_id) != str(selected_box_for_tool.get('boxId')):
+                return None, {
+                    'success': False,
+                    'message': (
+                        "update_box_attributes subagent classification can only classify the selected box shown in Image 1; "
+                        f"requested box_id '{box_id}' but selected box is '{selected_box_for_tool.get('boxId')}'"
+                    ),
+                }
+            if not contextual_images:
+                return None, {
+                    'success': False,
+                    'message': "update_box_attributes subagent classification requires the selected-box image context",
+                }
             target_box_index, target_box, target_box_error = _find_target_box(
                 next_boxes,
                 box_id,
@@ -921,21 +923,40 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             )
             if target_box_error:
                 return None, target_box_error
-            updated_box = {
-                **target_box,
-                'attributes': {
-                    **(target_box.get('attributes') or {}),
-                    **normalized_updates,
-                },
-            }
-            next_boxes[target_box_index] = updated_box
-            updated_boxes.append(updated_box)
 
-        _saved_boxes, validation_error = _save_target_boxes(project, current_user, frame_target, next_boxes)
-        if validation_error:
+            subagent_updates, subagent_failures = _run_and_apply_attribute_subagents(
+                project,
+                current_user,
+                frame_target,
+                next_boxes,
+                target_box_index,
+                selected_box_for_tool,
+                contextual_images,
+            )
+            if not subagent_updates:
+                return None, {
+                    'success': False,
+                    'message': "update_box_attributes subagent classification failed for all attributes",
+                    'failed_attributes': subagent_failures,
+                }
+
+            refreshed_boxes = _load_target_boxes(project, current_user, frame_target)
+            refreshed_index, refreshed_box, refreshed_error = _find_target_box(
+                refreshed_boxes,
+                box_id,
+                'update_box_attributes',
+                frame_target,
+            )
+            if refreshed_error:
+                return None, refreshed_error
+            next_boxes = refreshed_boxes
+            target_box_index = refreshed_index
+            updated_boxes.append(refreshed_box)
+
+        if not updated_boxes:
             return None, {
                 'success': False,
-                'message': validation_error,
+                'message': "update_box_attributes did not update any boxes",
             }
 
         executed_payload = {
@@ -945,12 +966,14 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             'sample_index': frame_target['sample_index'],
             'box': updated_boxes[0] if len(updated_boxes) == 1 else None,
             'boxes': updated_boxes,
+            'updated_attributes': subagent_updates,
+            'failed_attributes': subagent_failures,
         }
 
         return executed_payload, {
             'success': True,
             'message': (
-                f"Updated attributes for {len(updated_boxes)} box(es) in the {frame_target['label']} "
+                f"Updated {len(subagent_updates)} attribute(s) for {len(updated_boxes)} box(es) in the {frame_target['label']} "
                 f"(video_index={frame_target['video_index']}, sample_index={frame_target['sample_index']})"
             ),
             'action': 'update_box_attributes',
@@ -958,6 +981,8 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             'sample_index': frame_target['sample_index'],
             'box_id': updated_boxes[0]['id'] if len(updated_boxes) == 1 else None,
             'box_ids': [box['id'] for box in updated_boxes],
+            'updated_attributes': subagent_updates,
+            'failed_attributes': subagent_failures,
         }
 
     if action_name == 'update_box_object_id':
@@ -1112,6 +1137,121 @@ def _build_tool_result_message(action_payload, action_result):
             'Otherwise, answer the user directly.'
         ),
     }, ensure_ascii=False)
+
+
+def _extract_json_object(text):
+    if not isinstance(text, str) or not text.strip():
+        return None
+    stripped = text.strip()
+    fenced = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', stripped, flags=re.DOTALL | re.IGNORECASE)
+    candidates = [fenced.group(1)] if fenced else []
+    first = stripped.find('{')
+    last = stripped.rfind('}')
+    if first >= 0 and last > first:
+        candidates.append(stripped[first:last + 1])
+    candidates.append(stripped)
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _build_attribute_subagent_prompt(attribute_name, options, descriptions, selected_box):
+    option_lines = []
+    for code in options:
+        description = descriptions.get(code) if isinstance(descriptions, dict) else None
+        if description:
+            option_lines.append(f"- {code}: {description}")
+        else:
+            option_lines.append(f"- {code}")
+
+    return (
+        "You are an attribute-specific visual annotation subagent.\n"
+        "Image 1 is a full frame where pixels outside the selected box are masked black. "
+        "Only classify the selected clinician inside the visible unmasked region.\n\n"
+        f"Selected box context JSON:\n{json.dumps(selected_box, ensure_ascii=False, indent=2)}\n\n"
+        f"Task: classify exactly one attribute: {attribute_name}\n"
+        "Allowed labels:\n" + "\n".join(option_lines) + "\n\n"
+        "Use the attribute name, allowed labels, and label descriptions to determine the best label. "
+        "Return only compact valid JSON with this exact schema: "
+        f"{{\"attribute\":\"{attribute_name}\",\"value\":\"<one allowed label>\",\"reason\":\"<short visual reason>\"}}"
+    )
+
+
+def _run_attribute_subagent(project, selected_box, contextual_images, attribute_name):
+    attributes = project.get('attributes') or {}
+    descriptions_by_attribute = project.get('attribute_descriptions') or {}
+    raw_options = attributes.get(attribute_name)
+    if not isinstance(raw_options, list):
+        raise ChatbotServiceError(f"attribute {attribute_name!r} has no label options", status_code=502)
+    options = [str(option) for option in raw_options if isinstance(option, (str, int, float))]
+    if not options:
+        raise ChatbotServiceError(f"attribute {attribute_name!r} has no label options", status_code=502)
+
+    prompt = _build_attribute_subagent_prompt(
+        attribute_name,
+        options,
+        descriptions_by_attribute.get(attribute_name) or {},
+        selected_box,
+    )
+    reply = chatbot_service.generate_reply(messages=[{
+        'role': 'user',
+        'content': prompt,
+        'images': contextual_images,
+    }])
+    parsed = _extract_json_object(reply)
+    value = parsed.get('value') if isinstance(parsed, dict) else None
+    if isinstance(value, str):
+        value = value.strip()
+    if value not in options:
+        raise ChatbotServiceError(
+            f"attribute subagent for {attribute_name} returned invalid value {value!r}",
+            status_code=502,
+        )
+    return value, {
+        'attribute': attribute_name,
+        'value': value,
+        'reply': reply,
+        'parsed': parsed,
+    }
+
+
+def _run_and_apply_attribute_subagents(project, current_user, frame_target, boxes, target_box_index,
+                                      selected_box, contextual_images):
+    updated_attributes = {}
+    failed_attributes = {}
+    next_boxes = list(boxes)
+    for attribute_name in (project.get('attributes') or {}).keys():
+        if not isinstance(attribute_name, str):
+            continue
+        try:
+            value, subagent_result = _run_attribute_subagent(
+                project,
+                selected_box,
+                contextual_images,
+                attribute_name,
+            )
+            target_box = next_boxes[target_box_index]
+            updated_box = {
+                **target_box,
+                'attributes': {
+                    **(target_box.get('attributes') or {}),
+                    attribute_name: value,
+                },
+            }
+            next_boxes[target_box_index] = updated_box
+            _saved_boxes, validation_error = _save_target_boxes(project, current_user, frame_target, next_boxes)
+            if validation_error:
+                raise ChatbotServiceError(validation_error, status_code=400)
+            updated_attributes[attribute_name] = value
+        except Exception as error:
+            failed_attributes[attribute_name] = str(error)
+
+    return updated_attributes, failed_attributes
 
 
 def _read_frame_bytes(project, video_index, sample_index):
