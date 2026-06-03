@@ -860,6 +860,94 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             'box_ids': [box['id'] for box in updated_boxes],
         }
 
+    if action_name == 'update_single_attribute':
+        box_id = action_payload.get('box_id')
+        if box_id in (None, '') and selected_box_for_tool is not None:
+            box_id = selected_box_for_tool.get('boxId')
+
+        attribute_name = action_payload.get('attribute')
+        value = action_payload.get('value')
+        if not isinstance(attribute_name, str) or not attribute_name.strip():
+            return None, {
+                'success': False,
+                'message': "update_single_attribute requires attribute",
+            }
+        attribute_name = attribute_name.strip()
+
+        project_attributes = project.get('attributes') or {}
+        if attribute_name not in project_attributes:
+            normalized_attribute = None
+            for candidate in project_attributes.keys():
+                if isinstance(candidate, str) and candidate.lower() == attribute_name.lower():
+                    normalized_attribute = candidate
+                    break
+            if normalized_attribute is None:
+                return None, {
+                    'success': False,
+                    'message': f"update_single_attribute attribute '{attribute_name}' is not in project attributes",
+                }
+            attribute_name = normalized_attribute
+
+        allowed_values = project_attributes.get(attribute_name) or []
+        if isinstance(value, str):
+            value = value.strip()
+        if value not in allowed_values:
+            return None, {
+                'success': False,
+                'message': (
+                    f"update_single_attribute value '{value}' is not valid for attribute "
+                    f"'{attribute_name}'. Allowed values: {allowed_values}"
+                ),
+            }
+
+        target_box_index, target_box, target_box_error = _find_target_box(
+            existing_boxes,
+            box_id,
+            'update_single_attribute',
+            frame_target,
+        )
+        if target_box_error:
+            return None, target_box_error
+
+        next_boxes = list(existing_boxes)
+        updated_box = {
+            **target_box,
+            'attributes': {
+                **(target_box.get('attributes') or {}),
+                attribute_name: value,
+            },
+        }
+        next_boxes[target_box_index] = updated_box
+
+        _saved_boxes, validation_error = _save_target_boxes(project, current_user, frame_target, next_boxes)
+        if validation_error:
+            return None, {
+                'success': False,
+                'message': validation_error,
+            }
+
+        return {
+            'action': 'update_single_attribute',
+            'target_frame': target_frame,
+            'video_index': frame_target['video_index'],
+            'sample_index': frame_target['sample_index'],
+            'box': updated_box,
+            'attribute': attribute_name,
+            'value': value,
+        }, {
+            'success': True,
+            'message': (
+                f"Updated {attribute_name}={value} for box_id={box_id} in the {frame_target['label']} "
+                f"(video_index={frame_target['video_index']}, sample_index={frame_target['sample_index']})"
+            ),
+            'action': 'update_single_attribute',
+            'video_index': frame_target['video_index'],
+            'sample_index': frame_target['sample_index'],
+            'box_id': updated_box['id'],
+            'attribute': attribute_name,
+            'value': value,
+        }
+
     if action_name == 'update_box_attributes':
         requested_updates = action_payload.get('updates')
         if isinstance(requested_updates, list):

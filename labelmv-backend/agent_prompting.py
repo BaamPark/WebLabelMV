@@ -103,6 +103,8 @@ def build_contextual_chat_prompt(project, image_relationship_text=None,
         "{\"action\":\"update_box_attributes\",\"target_frame\":\"current\",\"box_id\":\"<selected box id>\"}. "
         "When the user asks to classify, update, or assign attributes for the selected box, call update_box_attributes; "
         "the backend will spawn one metadata-generated subagent per project attribute and update each successful attribute independently. "
+        "For updating exactly one known attribute value directly, use this schema: "
+        "{\"action\":\"update_single_attribute\",\"target_frame\":\"current|target\",\"box_id\":\"<existing box id>\",\"attribute\":\"<attribute name>\",\"value\":\"<attribute code>\"}. "
         "For the supported object identity update action, use either this single-box schema: "
         "{\"action\":\"update_box_object_id\",\"target_frame\":\"current|target\",\"box_id\":\"<existing box id>\",\"objectId\":<non-negative integer>} "
         "or this multi-box schema: "
