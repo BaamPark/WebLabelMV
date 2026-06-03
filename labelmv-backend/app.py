@@ -1698,15 +1698,6 @@ def chatbot(current_user):
             target_box = selected_boxes[0] if selected_boxes else None
         source_image_bytes = source_frame_bytes
         source_filename = f"source_view_{source_video_index}_frame_{source_sample_index}.jpg"
-        if target_box is not None:
-            selected_source_boxes = select_box_subset(source_boxes, target_box_id)
-            selected_source_box = selected_source_boxes[0] if selected_source_boxes else None
-            if selected_source_box is not None:
-                try:
-                    source_image_bytes = _mask_frame_to_box(source_frame_bytes, selected_source_box)
-                    source_filename = f"source_view_{source_video_index}_frame_{source_sample_index}_selected_mask.jpg"
-                except ChatbotServiceError as error:
-                    return jsonify({"error": error.message}), error.status_code
         contextual_images = [{
             'bytes': source_image_bytes,
             'mime_type': 'image/jpeg',
