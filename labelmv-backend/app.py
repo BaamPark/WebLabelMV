@@ -951,10 +951,10 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
     if action_name == 'update_box_attributes':
         requested_updates = action_payload.get('updates')
         if isinstance(requested_updates, list):
-            if len(requested_updates) != 1:
+            if not requested_updates:
                 return None, {
                     'success': False,
-                    'message': "update_box_attributes subagent classification supports exactly one selected box per action",
+                    'message': "update_box_attributes updates must be a non-empty array",
                 }
             updates = requested_updates
         else:
@@ -965,6 +965,7 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
 
         project_attributes = project.get('attributes') or {}
         updated_boxes = []
+        updated_attributes_by_box = {}
         next_boxes = list(existing_boxes)
         for item_index, update_item in enumerate(updates):
             if not isinstance(update_item, dict):
@@ -975,34 +976,55 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             box_id = update_item.get('box_id')
             if box_id in (None, '') and selected_box_for_tool is not None:
                 box_id = selected_box_for_tool.get('boxId')
-            if target_frame != 'current':
-                return None, {
-                    'success': False,
-                    'message': "update_box_attributes subagent classification currently supports target_frame='current' only",
-                }
-            if selected_box_for_tool is None:
-                return None, {
-                    'success': False,
-                    'message': "update_box_attributes subagent classification requires a selected box in the current turn",
-                }
             if box_id is None or str(box_id).strip() == '':
                 return None, {
                     'success': False,
-                    'message': "update_box_attributes subagent classification requires box_id",
+                    'message': f"update_box_attributes item {item_index} requires box_id",
                 }
-            if str(box_id) != str(selected_box_for_tool.get('boxId')):
+
+            raw_attributes = update_item.get('attributes')
+            if not isinstance(raw_attributes, dict) or not raw_attributes:
                 return None, {
                     'success': False,
-                    'message': (
-                        "update_box_attributes subagent classification can only classify the selected box shown in Image 1; "
-                        f"requested box_id '{box_id}' but selected box is '{selected_box_for_tool.get('boxId')}'"
-                    ),
+                    'message': f"update_box_attributes item {item_index} requires non-empty attributes",
                 }
-            if not contextual_images:
-                return None, {
-                    'success': False,
-                    'message': "update_box_attributes subagent classification requires the selected-box image context",
-                }
+
+            normalized_attributes = {}
+            for raw_attribute_name, raw_value in raw_attributes.items():
+                if not isinstance(raw_attribute_name, str) or not raw_attribute_name.strip():
+                    return None, {
+                        'success': False,
+                        'message': f"update_box_attributes item {item_index} has invalid attribute name",
+                    }
+                attribute_name = raw_attribute_name.strip()
+                if attribute_name not in project_attributes:
+                    normalized_attribute = None
+                    for candidate in project_attributes.keys():
+                        if isinstance(candidate, str) and candidate.lower() == attribute_name.lower():
+                            normalized_attribute = candidate
+                            break
+                    if normalized_attribute is None:
+                        return None, {
+                            'success': False,
+                            'message': (
+                                f"update_box_attributes item {item_index} attribute "
+                                f"'{attribute_name}' is not in project attributes"
+                            ),
+                        }
+                    attribute_name = normalized_attribute
+
+                value = raw_value.strip() if isinstance(raw_value, str) else raw_value
+                allowed_values = project_attributes.get(attribute_name) or []
+                if value not in allowed_values:
+                    return None, {
+                        'success': False,
+                        'message': (
+                            f"update_box_attributes item {item_index} value '{value}' is not valid "
+                            f"for attribute '{attribute_name}'. Allowed values: {allowed_values}"
+                        ),
+                    }
+                normalized_attributes[attribute_name] = value
+
             target_box_index, target_box, target_box_error = _find_target_box(
                 next_boxes,
                 box_id,
@@ -1012,34 +1034,23 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             if target_box_error:
                 return None, target_box_error
 
-            subagent_updates, subagent_failures = _run_and_apply_attribute_subagents(
-                project,
-                current_user,
-                frame_target,
-                next_boxes,
-                target_box_index,
-                selected_box_for_tool,
-                contextual_images,
-            )
-            if not subagent_updates:
-                return None, {
-                    'success': False,
-                    'message': "update_box_attributes subagent classification failed for all attributes",
-                    'failed_attributes': subagent_failures,
-                }
+            updated_box = {
+                **target_box,
+                'attributes': {
+                    **(target_box.get('attributes') or {}),
+                    **normalized_attributes,
+                },
+            }
+            next_boxes[target_box_index] = updated_box
+            updated_boxes.append(updated_box)
+            updated_attributes_by_box[str(box_id)] = normalized_attributes
 
-            refreshed_boxes = _load_target_boxes(project, current_user, frame_target)
-            refreshed_index, refreshed_box, refreshed_error = _find_target_box(
-                refreshed_boxes,
-                box_id,
-                'update_box_attributes',
-                frame_target,
-            )
-            if refreshed_error:
-                return None, refreshed_error
-            next_boxes = refreshed_boxes
-            target_box_index = refreshed_index
-            updated_boxes.append(refreshed_box)
+        _saved_boxes, validation_error = _save_target_boxes(project, current_user, frame_target, next_boxes)
+        if validation_error:
+            return None, {
+                'success': False,
+                'message': validation_error,
+            }
 
         if not updated_boxes:
             return None, {
@@ -1047,21 +1058,18 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
                 'message': "update_box_attributes did not update any boxes",
             }
 
-        executed_payload = {
+        return {
             'action': 'update_box_attributes',
             'target_frame': target_frame,
             'video_index': frame_target['video_index'],
             'sample_index': frame_target['sample_index'],
             'box': updated_boxes[0] if len(updated_boxes) == 1 else None,
             'boxes': updated_boxes,
-            'updated_attributes': subagent_updates,
-            'failed_attributes': subagent_failures,
-        }
-
-        return executed_payload, {
+            'updated_attributes': updated_attributes_by_box,
+        }, {
             'success': True,
             'message': (
-                f"Updated {len(subagent_updates)} attribute(s) for {len(updated_boxes)} box(es) in the {frame_target['label']} "
+                f"Updated attributes for {len(updated_boxes)} box(es) in the {frame_target['label']} "
                 f"(video_index={frame_target['video_index']}, sample_index={frame_target['sample_index']})"
             ),
             'action': 'update_box_attributes',
@@ -1069,8 +1077,7 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             'sample_index': frame_target['sample_index'],
             'box_id': updated_boxes[0]['id'] if len(updated_boxes) == 1 else None,
             'box_ids': [box['id'] for box in updated_boxes],
-            'updated_attributes': subagent_updates,
-            'failed_attributes': subagent_failures,
+            'updated_attributes': updated_attributes_by_box,
         }
 
     if action_name == 'update_box_object_id':
