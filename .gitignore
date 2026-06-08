@@ -9,3 +9,8 @@ annotations/
 *.pyc
 *.png
 *.ipynb
+notes/
+pilot/
+tmp/
+train/
+evaluation/
