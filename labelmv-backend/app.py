@@ -45,6 +45,7 @@ app.config['MAX_CONTENT_LENGTH'] = max(
 )
 chatbot_service = ChatbotProxyService(chatbot_config)
 ML_BACKEND_URL = os.environ.get('ML_BACKEND_URL', '').strip()
+DETECT_OBJECT_ENABLED = os.environ.get('DETECT_OBJECT_ENABLED', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
 
 # In-memory storage for annotations (for simplicity, will be replaced with database)
 annotations_storage = {}
@@ -514,6 +515,12 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
     existing_boxes = _load_target_boxes(project, current_user, frame_target)
 
     if action_name == 'detect_object':
+        if not DETECT_OBJECT_ENABLED:
+            return None, {
+                'success': False,
+                'message': 'detect_object is disabled; use create_box with bbox_1000 coordinates instead',
+            }
+
         class_name = action_payload.get('className')
         if class_name is not None and (
             not isinstance(class_name, str)

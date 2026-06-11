@@ -83,14 +83,13 @@ def build_contextual_chat_prompt(project, image_relationship_text=None,
         image_order += "- Target frame: Image 1\n"
 
     action_instructions = (
-        "If the user asks you to create a new annotation box from the frame, use detect_object. "
-        "If the user asks you to adjust or edit existing boxes, append exactly one final "
+        "If the user asks you to create a new annotation box or adjust an existing box, append exactly one final "
         "line beginning with ACTION_JSON: followed by compact JSON on the same line. "
         "Do not output bare JSON without the ACTION_JSON: prefix. "
         "One-shot example: ACTION_JSON: {\"action\":\"update_box_object_id\",\"target_frame\":\"current\",\"box_id\":\"x82lq2\",\"objectId\":1}. "
-        "For the supported detection tool, use this schema: "
-        "{\"action\":\"detect_object\",\"target_frame\":\"current|target\",\"className\":\"<project class or empty>\","
-        "\"max_detections\":<positive integer optional>}. "
+        "For the supported create action, use this multi-box schema: "
+        "{\"action\":\"create_box\",\"target_frame\":\"current|target\",\"boxes\":[{\"className\":\"<project class>\","
+        "\"bbox_1000\":[x1,y1,x2,y2]}]}. "
         "For the supported geometry update action, use either this single-box schema: "
         "{\"action\":\"update_box_geometry\",\"target_frame\":\"current|target\",\"box_id\":\"<existing box id>\",\"bbox_1000\":[x1,y1,x2,y2]} "
         "or this multi-box schema: "
@@ -115,7 +114,8 @@ def build_contextual_chat_prompt(project, image_relationship_text=None,
         "{\"action\":\"delete_box\",\"target_frame\":\"current|target\",\"box_ids\":[\"<existing box id>\"]}. "
         "Use bbox_1000 integers in [0,1000]. Use target_frame=\"target\" only when a target frame is available. "
         "In context JSON, user-facing tracking id is shown as id, while boxId is the internal box reference key. "
-        "When the user says update the id, they mean the tracking/object id, not boxId."
+        "When the user says update the id, they mean the tracking/object id, not boxId. "
+        "Do not include objectId or attributes for create_box; the backend will set defaults."
     )
 
     instructions = (
