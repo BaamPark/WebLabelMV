@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
@@ -358,6 +359,32 @@ class ChatbotProxyService:
             elif image_path.exists():
                 image_path.unlink()
 
+    def _dump_latest_provider_response(self, response_json, extracted_reply=None):
+        enabled = os.environ.get("AGENT_TRACE_LOGGING", "").strip().lower() in {"1", "true", "yes", "on"}
+        if not enabled:
+            return
+
+        dump_dir = Path(os.environ.get("AGENT_INPUT_IMAGE_DUMP_DIR", "/tmp")).resolve()
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        output_path = dump_dir / "agent_latest_provider_response.json"
+        temporary_path = output_path.with_suffix(".json.tmp")
+        temporary_path.write_text(
+            json.dumps(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "provider": self.config.provider,
+                    "model": self.config.model_id,
+                    "url": self._request_url(),
+                    "extracted_reply": extracted_reply,
+                    "response_json": response_json,
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        temporary_path.replace(output_path)
+
     def generate_reply(self, messages):
         normalized_messages = self._normalize_messages(messages)
         if not normalized_messages:
@@ -385,10 +412,12 @@ class ChatbotProxyService:
             data = {}
 
         if not response.ok:
+            self._dump_latest_provider_response(data)
             message = data.get("error") or f"chatbot server returned {response.status_code}"
             raise ChatbotServiceError(message, status_code=502)
 
         reply = self._extract_reply(data)
+        self._dump_latest_provider_response(data, extracted_reply=reply or None)
         if not reply:
             try:
                 print(

@@ -78,10 +78,12 @@ def build_contextual_chat_prompt(project, image_relationship_text=None,
 
     action_instructions = (
         "If the user asks you to create a new annotation box from the frame, use detect_object. "
-        "If the user asks you to adjust or edit existing boxes, append exactly one final "
-        "line beginning with ACTION_JSON: followed by compact JSON on the same line. "
+        "For every tool action, append exactly one final line beginning with ACTION_JSON: "
+        "followed by compact JSON on the same line. "
         "Do not output bare JSON without the ACTION_JSON: prefix. "
-        "One-shot example: ACTION_JSON: {\"action\":\"update_box_object_id\",\"target_frame\":\"current\",\"box_id\":\"x82lq2\",\"objectId\":1}. "
+        "Do not wrap the action JSON in a Markdown code block. "
+        "Detection example: ACTION_JSON: {\"action\":\"detect_object\",\"target_frame\":\"current\",\"className\":\"clinician\",\"max_detections\":5}. "
+        "Edit example: ACTION_JSON: {\"action\":\"update_box_object_id\",\"target_frame\":\"current\",\"box_id\":\"x82lq2\",\"objectId\":1}. "
         "For the supported detection tool, use this schema: "
         "{\"action\":\"detect_object\",\"target_frame\":\"current|target\",\"className\":\"<project class or empty>\","
         "\"max_detections\":<positive integer optional>}. "

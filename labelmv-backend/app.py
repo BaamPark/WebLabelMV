@@ -17,6 +17,7 @@ import math
 import io
 import numpy as np
 import requests
+from pathlib import Path
 
 from agent_prompting import (
     build_contextual_chat_prompt,
@@ -48,6 +49,22 @@ ML_BACKEND_URL = os.environ.get('ML_BACKEND_URL', '').strip()
 
 # In-memory storage for annotations (for simplicity, will be replaced with database)
 annotations_storage = {}
+
+
+def _write_latest_agent_trace(trace):
+    enabled = os.environ.get('AGENT_TRACE_LOGGING', '').strip().lower() in {'1', 'true', 'yes', 'on'}
+    if not enabled:
+        return
+
+    dump_dir = Path(os.environ.get('AGENT_INPUT_IMAGE_DUMP_DIR', '/tmp')).resolve()
+    dump_dir.mkdir(parents=True, exist_ok=True)
+    output_path = dump_dir / 'agent_latest_trace.json'
+    temporary_path = output_path.with_suffix('.json.tmp')
+    temporary_path.write_text(
+        json.dumps(trace, indent=2, ensure_ascii=False),
+        encoding='utf-8',
+    )
+    temporary_path.replace(output_path)
 
 def _coerce_project_id(project_id):
     if isinstance(project_id, ObjectId):
@@ -1782,6 +1799,19 @@ def chatbot(current_user):
 
     @stream_with_context
     def generate_events():
+        trace = {
+            'trace_id': secrets.token_hex(8),
+            'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'user_id': str(current_user['_id']),
+            'project_id': str(project_id) if project_id is not None else None,
+            'source_video_index': source_video_index,
+            'source_sample_index': source_sample_index,
+            'provider': chatbot_config.provider,
+            'model': chatbot_config.model_id,
+            'events': [],
+        }
+        _write_latest_agent_trace(trace)
+
         yield json.dumps({
             "type": "status",
             "message": "Waiting for response",
@@ -1792,12 +1822,26 @@ def chatbot(current_user):
                 messages=ollama_messages,
             )
         except ChatbotServiceError as error:
+            trace['events'].append({
+                'type': 'model_error',
+                'step': 0,
+                'error': error.message,
+                'status_code': error.status_code,
+            })
+            _write_latest_agent_trace(trace)
             yield json.dumps({
                 "type": "error",
                 "error": error.message,
                 "status_code": error.status_code,
             }) + "\n"
             return
+
+        trace['events'].append({
+            'type': 'model_response',
+            'step': 0,
+            'raw_reply': reply,
+        })
+        _write_latest_agent_trace(trace)
 
         executed_action = None
         action_result = None
@@ -1807,6 +1851,12 @@ def chatbot(current_user):
 
         for _tool_step in range(3):
             action_payload = extract_action_json(final_reply)
+            trace['events'].append({
+                'type': 'action_parse',
+                'step': _tool_step,
+                'parsed_action': action_payload,
+            })
+            _write_latest_agent_trace(trace)
             if not project_id or not action_payload:
                 break
 
@@ -1831,6 +1881,14 @@ def chatbot(current_user):
                 'action': executed_action,
                 'actionResult': action_result,
             })
+            trace['events'].append({
+                'type': 'tool_result',
+                'step': _tool_step,
+                'requested_action': action_payload,
+                'executed_action': executed_action,
+                'action_result': action_result,
+            })
+            _write_latest_agent_trace(trace)
 
             followup_messages = [
                 *active_messages,
@@ -1860,13 +1918,31 @@ def chatbot(current_user):
                     messages=followup_messages,
                 )
             except ChatbotServiceError as error:
+                trace['events'].append({
+                    'type': 'model_error',
+                    'step': _tool_step + 1,
+                    'error': error.message,
+                    'status_code': error.status_code,
+                })
+                _write_latest_agent_trace(trace)
                 yield json.dumps({
                     "type": "error",
                     "error": error.message,
                     "status_code": error.status_code,
                 }) + "\n"
                 return
+            trace['events'].append({
+                'type': 'model_response',
+                'step': _tool_step + 1,
+                'raw_reply': final_reply,
+            })
+            _write_latest_agent_trace(trace)
             active_messages = followup_messages
+
+        trace['final_reply'] = final_reply
+        trace['final_visible_reply'] = strip_action_json(final_reply)
+        trace['tool_results'] = tool_results
+        _write_latest_agent_trace(trace)
 
         yield json.dumps({
             "type": "result",
