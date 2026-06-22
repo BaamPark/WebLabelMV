@@ -165,6 +165,7 @@ def _agent_bbox_to_backend_box(bbox_1000):
 
 
 def _normalize_and_validate_boxes(boxes, project):
+    boundary_epsilon = 1e-3
     project_classes = [item for item in (project.get('classes') or []) if isinstance(item, str)]
     project_attributes = project.get('attributes') or {}
     normalized_boxes = []
@@ -214,16 +215,18 @@ def _normalize_and_validate_boxes(boxes, project):
                 f"Invalid box at index {index}: y2 must be greater than y1 and remain inside the frame; "
                 f"current bbox maps to [x1, y1, x2, y2] = [{x1}, {y1}, {x2}, {y2}]"
             )
-        if left + width > 1:
+        if left + width > 1 + boundary_epsilon:
             return None, (
                 f"Invalid box at index {index}: x2 value {x2} exceeds the frame width; "
                 f"agent bbox coordinates must stay within [0, 1000]"
             )
-        if top + height > 1:
+        if top + height > 1 + boundary_epsilon:
             return None, (
                 f"Invalid box at index {index}: y2 value {y2} exceeds the frame height; "
                 f"agent bbox coordinates must stay within [0, 1000]"
             )
+        width = min(width, 1 - left)
+        height = min(height, 1 - top)
 
         class_name = box.get('className')
         if not isinstance(class_name, str) or not class_name.strip():
@@ -1713,6 +1716,7 @@ def chatbot(current_user):
             'filename': source_filename,
         }]
         image_relationship_text = None
+        boxes_for_target_frame = None
 
         if target_scope != 'none':
             try:
@@ -1732,6 +1736,8 @@ def chatbot(current_user):
                 target_video_index,
                 target_sample_index,
             )
+            if target_scope in {'previous_current_view', 'next_current_view'}:
+                boxes_for_target_frame = serialize_boxes_for_prompt(target_boxes)
             has_additional_frame = True
             image_relationship_text = _describe_image_relationship(
                 target_scope,
@@ -1755,6 +1761,7 @@ def chatbot(current_user):
             project,
             image_relationship_text=image_relationship_text,
             boxes_for_current_frame=boxes_for_current_frame,
+            boxes_for_target_frame=boxes_for_target_frame,
             has_selected_box_crop=(target_box is not None),
         )
         ollama_messages = [{

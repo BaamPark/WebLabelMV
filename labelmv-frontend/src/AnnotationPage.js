@@ -142,10 +142,21 @@ const AnnotationPage = () => {
   const saveBoxesForFrame = async (videoIndex, sIndex, boxes) => {
     if (!projectId) return false;
     try {
-      // ensure objectId defaults to 0 if not provided or invalid
+      // Clamp geometry before saving so floating-point edge values stay inside the frame.
       const boxesToSave = (boxes || []).map(b => {
         const n = parseInt((b.objectId ?? b.id), 10);
-        return { ...b, objectId: Number.isFinite(n) ? n : 0 };
+        const left = Math.max(0, Math.min(1, Number(b.left) || 0));
+        const top = Math.max(0, Math.min(1, Number(b.top) || 0));
+        const width = Math.max(0, Math.min(1 - left, Number(b.width) || 0));
+        const height = Math.max(0, Math.min(1 - top, Number(b.height) || 0));
+        return {
+          ...b,
+          left,
+          top,
+          width,
+          height,
+          objectId: Number.isFinite(n) ? n : 0
+        };
       });
       const resp = await fetch(`/api/projects/${projectId}/annotations?video_index=${videoIndex}&sample_index=${sIndex}`, {
         method: 'POST',
@@ -155,7 +166,15 @@ const AnnotationPage = () => {
         },
         body: JSON.stringify(boxesToSave)
       });
-      return !!resp.ok;
+      if (!resp.ok) {
+        const message = await resp.text();
+        console.error(
+          `Failed to save annotations for video_index=${videoIndex}, sample_index=${sIndex}:`,
+          message
+        );
+        return false;
+      }
+      return true;
     } catch (error) {
       console.error('Error saving annotations:', error);
       return false;
