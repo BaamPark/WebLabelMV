@@ -66,6 +66,23 @@ def _write_latest_agent_trace(trace):
     )
     temporary_path.replace(output_path)
 
+
+def _agent_action_dedup_key(action_payload):
+    if action_payload.get('action') == 'detect_object':
+        return json.dumps({
+            'action': 'detect_object',
+            'target_frame': action_payload.get('target_frame') or 'current',
+            'className': action_payload.get('className') or '',
+        }, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+    return json.dumps(
+        action_payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(',', ':'),
+    )
+
+
 def _coerce_project_id(project_id):
     if isinstance(project_id, ObjectId):
         return project_id
@@ -1848,6 +1865,7 @@ def chatbot(current_user):
         final_reply = reply
         tool_results = []
         active_messages = ollama_messages
+        executed_action_keys = set()
 
         for _tool_step in range(3):
             action_payload = extract_action_json(final_reply)
@@ -1859,6 +1877,17 @@ def chatbot(current_user):
             _write_latest_agent_trace(trace)
             if not project_id or not action_payload:
                 break
+
+            action_key = _agent_action_dedup_key(action_payload)
+            if action_key in executed_action_keys:
+                trace['events'].append({
+                    'type': 'duplicate_action_blocked',
+                    'step': _tool_step,
+                    'action': action_payload,
+                })
+                _write_latest_agent_trace(trace)
+                break
+            executed_action_keys.add(action_key)
 
             yield json.dumps({
                 "type": "status",
