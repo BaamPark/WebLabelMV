@@ -58,6 +58,7 @@ def build_turn_user_message(user_text, selected_box=None):
 
 def build_contextual_chat_prompt(project, image_relationship_text=None,
                                  boxes_for_current_frame=None,
+                                 boxes_for_target_frame=None,
                                  has_selected_box_crop=False):
     payload = {
         'task': 'Answer the user question using the provided annotation context. Do not propose or execute actions unless the user explicitly asks for analysis of possible edits.',
@@ -68,6 +69,8 @@ def build_contextual_chat_prompt(project, image_relationship_text=None,
     }
     if boxes_for_current_frame is not None:
         payload['boxes_for_current_frame'] = boxes_for_current_frame
+    if boxes_for_target_frame is not None:
+        payload['boxes_for_target_frame'] = boxes_for_target_frame
 
     if has_selected_box_crop:
         image_order = (

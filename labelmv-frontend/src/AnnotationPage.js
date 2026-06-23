@@ -144,7 +144,8 @@ const AnnotationPage = () => {
     try {
       // Clamp geometry before saving so floating-point edge values stay inside the frame.
       const boxesToSave = (boxes || []).map(b => {
-        const n = parseInt((b.objectId ?? b.id), 10);
+        // `id` is the internal random box key, not the user-facing object ID.
+        const n = parseInt(b.objectId, 10);
         const left = Math.max(0, Math.min(1, Number(b.left) || 0));
         const top = Math.max(0, Math.min(1, Number(b.top) || 0));
         const width = Math.max(0, Math.min(1 - left, Number(b.width) || 0));
