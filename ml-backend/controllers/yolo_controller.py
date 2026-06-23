@@ -23,7 +23,7 @@ def _clamp_1000(value):
     return max(0, min(1000, int(round(float(value)))))
 
 
-def detect_objects(image_bytes, class_name="", max_detections=None):
+def detect_objects(image_bytes, class_name=""):
     if not image_bytes:
         return {"error": "image file is empty"}, 400
 
@@ -62,9 +62,6 @@ def detect_objects(image_bytes, class_name="", max_detections=None):
             })
 
     detections.sort(key=lambda item: item["score"], reverse=True)
-    if max_detections is not None and max_detections > 0:
-        detections = detections[:max_detections]
-
     return {
         "success": True,
         "detections": detections,

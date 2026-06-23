@@ -50,6 +50,23 @@ DETECT_OBJECT_ENABLED = os.environ.get('DETECT_OBJECT_ENABLED', 'true').strip().
 # In-memory storage for annotations (for simplicity, will be replaced with database)
 annotations_storage = {}
 
+
+def _agent_action_dedup_key(action_payload):
+    if action_payload.get('action') == 'detect_object':
+        return json.dumps({
+            'action': 'detect_object',
+            'target_frame': action_payload.get('target_frame') or 'current',
+            'className': action_payload.get('className') or '',
+        }, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+    return json.dumps(
+        action_payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(',', ':'),
+    )
+
+
 def _coerce_project_id(project_id):
     if isinstance(project_id, ObjectId):
         return project_id
@@ -426,7 +443,7 @@ def _save_target_boxes(project, current_user, frame_target, boxes):
     return normalized_boxes, None
 
 
-def _detect_objects_with_ml_backend(project, frame_target, class_name=None, max_detections=None):
+def _detect_objects_with_ml_backend(project, frame_target, class_name=None):
     if not ML_BACKEND_URL:
         return None, "ML_BACKEND_URL is not configured"
 
@@ -443,8 +460,6 @@ def _detect_objects_with_ml_backend(project, frame_target, class_name=None, max_
     }
     if isinstance(class_name, str) and class_name.strip():
         data['class_name'] = class_name.strip()
-    if isinstance(max_detections, int) and max_detections > 0:
-        data['max_detections'] = str(max_detections)
 
     try:
         response = requests.post(ML_BACKEND_URL, files=files, data=data, timeout=300)
@@ -521,7 +536,7 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
         if not DETECT_OBJECT_ENABLED:
             return None, {
                 'success': False,
-                'message': 'detect_object is disabled; use create_box with bbox_1000 coordinates instead',
+                'message': 'detect_object is disabled',
             }
 
         class_name = action_payload.get('className')
@@ -534,26 +549,10 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
                 'message': f"detect_object className '{class_name}' is not in project classes",
             }
 
-        max_detections = action_payload.get('max_detections')
-        if max_detections is not None:
-            try:
-                max_detections = int(max_detections)
-            except (TypeError, ValueError):
-                return None, {
-                    'success': False,
-                    'message': "detect_object max_detections must be an integer",
-                }
-            if max_detections <= 0:
-                return None, {
-                    'success': False,
-                    'message': "detect_object max_detections must be greater than 0",
-                }
-
         detections, detection_error = _detect_objects_with_ml_backend(
             project,
             frame_target,
             class_name=class_name,
-            max_detections=max_detections,
         )
         if detection_error:
             return None, {
@@ -1820,11 +1819,17 @@ def chatbot(current_user):
         final_reply = reply
         tool_results = []
         active_messages = ollama_messages
+        executed_action_keys = set()
 
         for _tool_step in range(3):
             action_payload = extract_action_json(final_reply)
             if not project_id or not action_payload:
                 break
+
+            action_key = _agent_action_dedup_key(action_payload)
+            if action_key in executed_action_keys:
+                break
+            executed_action_keys.add(action_key)
 
             yield json.dumps({
                 "type": "status",
