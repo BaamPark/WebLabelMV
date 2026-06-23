@@ -188,6 +188,13 @@ def _agent_bbox_to_backend_box(bbox_1000):
     }, None
 
 
+def _agent_yx_bbox_to_backend_box(bbox_1000_yx):
+    if not isinstance(bbox_1000_yx, list) or len(bbox_1000_yx) != 4:
+        return None, "bbox_1000_yx must be an array of four numbers: [y1, x1, y2, x2]"
+    y1, x1, y2, x2 = bbox_1000_yx
+    return _agent_bbox_to_backend_box([x1, y1, x2, y2])
+
+
 def _normalize_and_validate_boxes(boxes, project):
     project_classes = [item for item in (project.get('classes') or []) if isinstance(item, str)]
     project_attributes = project.get('attributes') or {}
@@ -537,7 +544,10 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
                     'message': f"create_box item {item_index} className '{class_name}' is not in project classes",
                 }
 
-            bbox_backend, bbox_error = _agent_bbox_to_backend_box(box_spec.get('bbox_1000'))
+            if 'bbox_1000_yx' in box_spec:
+                bbox_backend, bbox_error = _agent_yx_bbox_to_backend_box(box_spec.get('bbox_1000_yx'))
+            else:
+                bbox_backend, bbox_error = _agent_bbox_to_backend_box(box_spec.get('bbox_1000'))
             if bbox_error:
                 return None, {
                     'success': False,
