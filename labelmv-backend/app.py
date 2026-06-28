@@ -646,6 +646,50 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
                 'bbox_1000': action_payload.get('bbox_1000'),
             }]
 
+        should_delegate_detection = (
+            not isinstance(requested_boxes, list)
+            and action_payload.get('bbox_1000') is None
+        )
+        if should_delegate_detection:
+            class_name = action_payload.get('className')
+            if not isinstance(class_name, str) or not class_name.strip():
+                return None, {
+                    'success': False,
+                    'message': "create_box subagent detection requires className",
+                }
+            class_name = class_name.strip()
+
+            if class_name not in (project.get('classes') or []):
+                return None, {
+                    'success': False,
+                    'message': f"create_box className '{class_name}' is not in project classes",
+                }
+            if target_frame != 'current':
+                return None, {
+                    'success': False,
+                    'message': "create_box subagent detection currently supports target_frame='current' only",
+                }
+            if not contextual_images:
+                return None, {
+                    'success': False,
+                    'message': "create_box subagent detection requires image context",
+                }
+
+            detection_result = _run_count_guided_box_detection_subagents(class_name, contextual_images)
+            box_specs = [{
+                'className': class_name,
+                'bbox_1000': item.get('bbox_1000'),
+            } for item in detection_result.get('boxes') or []]
+            if not box_specs:
+                return None, {
+                    'success': False,
+                    'message': f"create_box subagent detection found no {class_name} boxes",
+                    'action': 'create_box',
+                    'className': class_name,
+                    'count_result': detection_result.get('count_result'),
+                    'detection_reply': detection_result.get('detection_reply'),
+                }
+
         created_boxes = []
         next_boxes = list(existing_boxes)
         for item_index, box_spec in enumerate(box_specs):
@@ -703,6 +747,7 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             'sample_index': frame_target['sample_index'],
             'box': created_boxes[0] if len(created_boxes) == 1 else None,
             'boxes': created_boxes,
+            'subagent_detection': detection_result if should_delegate_detection else None,
         }, {
             'success': True,
             'message': (
@@ -714,6 +759,7 @@ def _execute_agent_action(action_payload, project, current_user, source_video_in
             'sample_index': frame_target['sample_index'],
             'box_id': created_boxes[0]['id'] if len(created_boxes) == 1 else None,
             'box_ids': [box['id'] for box in created_boxes],
+            'subagent_detection': detection_result if should_delegate_detection else None,
         }
 
     if action_name == 'update_box_geometry':
@@ -1255,6 +1301,129 @@ def _extract_json_object(text):
         if isinstance(parsed, dict):
             return parsed
     return None
+
+
+def _coerce_subagent_count(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float) and math.isfinite(value):
+        rounded = int(round(value))
+        return rounded if rounded >= 0 and abs(value - rounded) < 1e-6 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _build_object_count_subagent_prompt(class_name):
+    return (
+        "You are an object-counting visual annotation subagent.\n"
+        f"Target class label: {class_name}\n\n"
+        "Task: count every visible target object in Image 1 that matches the target class label.\n"
+        "Use a systematic scan strategy: examine the image from left to right and top to bottom, "
+        "identify each visible target object one by one, include partially visible or occluded target objects, "
+        "and then double-check the full image once more before finalizing the count.\n\n"
+        "Return only compact valid JSON with this exact schema: "
+        "{\"className\":\"<target class label>\",\"count\":<non-negative integer>,\"reason\":\"<short reason>\"}"
+    )
+
+
+def _run_object_count_subagent(class_name, contextual_images):
+    prompt = _build_object_count_subagent_prompt(class_name)
+    reply = chatbot_service.generate_reply(messages=[{
+        'role': 'user',
+        'content': prompt,
+        'images': contextual_images[:1],
+    }])
+    parsed = _extract_json_object(reply)
+    count = _coerce_subagent_count(parsed.get('count') if isinstance(parsed, dict) else None)
+    if count is None:
+        raise ChatbotServiceError(
+            f"object-counting subagent returned invalid count; reply={reply!r}",
+            status_code=502,
+        )
+    return count, {
+        'className': class_name,
+        'count': count,
+        'reply': reply,
+        'parsed': parsed,
+    }
+
+
+def _build_count_guided_box_detection_prompt(class_name, count):
+    return (
+        "You are a visual grounding subagent for annotation box creation.\n"
+        f"Target class label: {class_name}\n"
+        f"Expected number of target objects: {count}\n\n"
+        "Task: draw tight bounding boxes for the target objects in Image 1.\n"
+        "Use the expected count as a constraint. Scan the image systematically from left to right and top to bottom, "
+        "find each target object matching the target class label, and return exactly the expected number of boxes. "
+        "If an object is partially visible or occluded, include the visible extent of that target object. "
+        "Do not include non-target objects.\n\n"
+        "Output format rules are strict:\n"
+        "- Return only one compact valid JSON object.\n"
+        "- Do not use Markdown.\n"
+        "- The top-level JSON object must contain exactly className and boxes.\n"
+        "- boxes must be an array of objects, not an array of coordinate arrays.\n"
+        "- Each box object must contain exactly one key: bbox_1000.\n"
+        "- bbox_1000 must be [x1,y1,x2,y2] normalized to integer coordinates in [0,1000].\n"
+        "- Do not use keys named bbox, box, bbox_2d, coordinates, or xyxy.\n\n"
+        "Correct output example for two objects: "
+        "{\"className\":\"" + class_name + "\",\"boxes\":[{\"bbox_1000\":[100,100,200,300]},{\"bbox_1000\":[400,120,520,360]}]}\n"
+        "Now return the JSON for Image 1."
+    )
+
+
+def _parse_detection_subagent_boxes(parsed, expected_count):
+    if not isinstance(parsed, dict):
+        raise ChatbotServiceError("box-detection subagent did not return a JSON object", status_code=502)
+    boxes = parsed.get('boxes')
+    if not isinstance(boxes, list):
+        raise ChatbotServiceError("box-detection subagent JSON must contain boxes array", status_code=502)
+    if expected_count == 0:
+        return []
+    if not boxes:
+        raise ChatbotServiceError("box-detection subagent returned no boxes", status_code=502)
+
+    parsed_boxes = []
+    for index, item in enumerate(boxes):
+        if not isinstance(item, dict):
+            raise ChatbotServiceError(f"box-detection subagent box {index} must be an object", status_code=502)
+        bbox = item.get('bbox_1000')
+        _backend_box, bbox_error = _agent_bbox_to_backend_box(bbox)
+        if bbox_error:
+            raise ChatbotServiceError(f"box-detection subagent box {index}: {bbox_error}", status_code=502)
+        parsed_boxes.append({'bbox_1000': bbox})
+    return parsed_boxes
+
+
+def _run_count_guided_box_detection_subagents(class_name, contextual_images):
+    count, count_result = _run_object_count_subagent(class_name, contextual_images)
+    if count == 0:
+        return {
+            'className': class_name,
+            'count_result': count_result,
+            'detection_reply': None,
+            'boxes': [],
+        }
+
+    prompt = _build_count_guided_box_detection_prompt(class_name, count)
+    reply = chatbot_service.generate_reply(messages=[{
+        'role': 'user',
+        'content': prompt,
+        'images': contextual_images[:1],
+    }])
+    parsed = _extract_json_object(reply)
+    boxes = _parse_detection_subagent_boxes(parsed, count)
+    return {
+        'className': class_name,
+        'count_result': count_result,
+        'detection_reply': reply,
+        'detection_parsed': parsed,
+        'expected_count': count,
+        'boxes': boxes,
+    }
 
 
 def _build_attribute_subagent_prompt(attribute_name, options, descriptions, selected_box):
