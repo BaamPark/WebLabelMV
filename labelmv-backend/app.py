@@ -1448,6 +1448,47 @@ def _build_attribute_subagent_prompt(attribute_name, options, descriptions, sele
     )
 
 
+def _build_all_attributes_subagent_prompt(project, selected_box):
+    attributes = project.get('attributes') or {}
+    descriptions_by_attribute = project.get('attribute_descriptions') or {}
+    attribute_blocks = []
+    schema_attributes = {}
+
+    for attribute_name, raw_options in attributes.items():
+        if not isinstance(attribute_name, str) or not isinstance(raw_options, list):
+            continue
+        options = [str(option) for option in raw_options if isinstance(option, (str, int, float))]
+        if not options:
+            continue
+        descriptions = descriptions_by_attribute.get(attribute_name) or {}
+        option_lines = []
+        for code in options:
+            description = descriptions.get(code) if isinstance(descriptions, dict) else None
+            if description:
+                option_lines.append(f"- {code}: {description}")
+            else:
+                option_lines.append(f"- {code}")
+        attribute_blocks.append(
+            f"{attribute_name}:\n" + "\n".join(option_lines)
+        )
+        schema_attributes[attribute_name] = "<one allowed label>"
+
+    return (
+        "You are a visual annotation subagent for selected-object attribute classification.\n"
+        "Image 1 is a full frame where pixels outside the selected box are masked black. "
+        "Only classify the selected object inside the visible unmasked region.\n\n"
+        f"Selected box context JSON:\n{json.dumps(selected_box, ensure_ascii=False, indent=2)}\n\n"
+        "Task: classify all listed attributes for the selected object.\n"
+        "Allowed labels by attribute:\n" + "\n\n".join(attribute_blocks) + "\n\n"
+        "Use each attribute name, allowed labels, and label descriptions to determine the best label. "
+        "Return only compact valid JSON with this exact schema: "
+        + json.dumps({
+            "attributes": schema_attributes,
+            "reason": "<short visual reason>",
+        }, ensure_ascii=False)
+    )
+
+
 def _run_attribute_subagent(project, selected_box, contextual_images, attribute_name):
     attributes = project.get('attributes') or {}
     descriptions_by_attribute = project.get('attribute_descriptions') or {}
@@ -1486,36 +1527,79 @@ def _run_attribute_subagent(project, selected_box, contextual_images, attribute_
     }
 
 
-def _run_and_apply_attribute_subagents(project, current_user, frame_target, boxes, target_box_index,
-                                      selected_box, contextual_images):
+def _run_all_attributes_subagent(project, selected_box, contextual_images):
+    attributes = project.get('attributes') or {}
+    allowed_options_by_attribute = {}
+    for attribute_name, raw_options in attributes.items():
+        if not isinstance(attribute_name, str) or not isinstance(raw_options, list):
+            continue
+        options = [str(option) for option in raw_options if isinstance(option, (str, int, float))]
+        if options:
+            allowed_options_by_attribute[attribute_name] = options
+
+    if not allowed_options_by_attribute:
+        raise ChatbotServiceError("project has no attribute label options", status_code=502)
+
+    prompt = _build_all_attributes_subagent_prompt(project, selected_box)
+    reply = chatbot_service.generate_reply(messages=[{
+        'role': 'user',
+        'content': prompt,
+        'images': contextual_images,
+    }])
+    parsed = _extract_json_object(reply)
+    predicted_attributes = parsed.get('attributes') if isinstance(parsed, dict) else None
+    if not isinstance(predicted_attributes, dict):
+        raise ChatbotServiceError(
+            f"all-attribute subagent returned invalid attributes object; reply={reply!r}",
+            status_code=502,
+        )
+
     updated_attributes = {}
     failed_attributes = {}
-    next_boxes = list(boxes)
-    for attribute_name in (project.get('attributes') or {}).keys():
-        if not isinstance(attribute_name, str):
-            continue
-        try:
-            value, subagent_result = _run_attribute_subagent(
-                project,
-                selected_box,
-                contextual_images,
-                attribute_name,
-            )
-            target_box = next_boxes[target_box_index]
-            updated_box = {
-                **target_box,
-                'attributes': {
-                    **(target_box.get('attributes') or {}),
-                    attribute_name: value,
-                },
-            }
-            next_boxes[target_box_index] = updated_box
-            _saved_boxes, validation_error = _save_target_boxes(project, current_user, frame_target, next_boxes)
-            if validation_error:
-                raise ChatbotServiceError(validation_error, status_code=400)
+    for attribute_name, options in allowed_options_by_attribute.items():
+        value = predicted_attributes.get(attribute_name)
+        if isinstance(value, str):
+            value = value.strip()
+        if value in options:
             updated_attributes[attribute_name] = value
-        except Exception as error:
-            failed_attributes[attribute_name] = str(error)
+        else:
+            failed_attributes[attribute_name] = f"invalid value {value!r}"
+
+    return updated_attributes, failed_attributes, {
+        'attributes': updated_attributes,
+        'failed_attributes': failed_attributes,
+        'reply': reply,
+        'parsed': parsed,
+    }
+
+
+def _run_and_apply_attribute_subagents(project, current_user, frame_target, boxes, target_box_index,
+                                      selected_box, contextual_images):
+    try:
+        updated_attributes, failed_attributes, _subagent_result = _run_all_attributes_subagent(
+            project,
+            selected_box,
+            contextual_images,
+        )
+    except Exception as error:
+        return {}, {'all_attributes': str(error)}
+
+    if not updated_attributes:
+        return updated_attributes, failed_attributes
+
+    next_boxes = list(boxes)
+    target_box = next_boxes[target_box_index]
+    updated_box = {
+        **target_box,
+        'attributes': {
+            **(target_box.get('attributes') or {}),
+            **updated_attributes,
+        },
+    }
+    next_boxes[target_box_index] = updated_box
+    _saved_boxes, validation_error = _save_target_boxes(project, current_user, frame_target, next_boxes)
+    if validation_error:
+        return {}, {'save': validation_error}
 
     return updated_attributes, failed_attributes
 
