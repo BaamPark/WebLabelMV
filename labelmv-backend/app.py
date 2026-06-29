@@ -1437,8 +1437,8 @@ def _build_attribute_subagent_prompt(attribute_name, options, descriptions, sele
 
     return (
         "You are an attribute-specific visual annotation subagent.\n"
-        "Image 1 is a full frame where pixels outside the selected box are masked black. "
-        "Only classify the selected clinician inside the visible unmasked region.\n\n"
+        "Image 1 is a crop of the selected box from the current frame. "
+        "Only classify the selected clinician shown in the crop.\n\n"
         f"Selected box context JSON:\n{json.dumps(selected_box, ensure_ascii=False, indent=2)}\n\n"
         f"Task: classify exactly one attribute: {attribute_name}\n"
         "Allowed labels:\n" + "\n".join(option_lines) + "\n\n"
@@ -1475,8 +1475,8 @@ def _build_all_attributes_subagent_prompt(project, selected_box):
 
     return (
         "You are a visual annotation subagent for selected-object attribute classification.\n"
-        "Image 1 is a full frame where pixels outside the selected box are masked black. "
-        "Only classify the selected object inside the visible unmasked region.\n\n"
+        "Image 1 is a crop of the selected box from the current frame. "
+        "Only classify the selected object shown in the crop.\n\n"
         f"Selected box context JSON:\n{json.dumps(selected_box, ensure_ascii=False, indent=2)}\n\n"
         "Task: classify all listed attributes for the selected object.\n"
         "Allowed labels by attribute:\n" + "\n\n".join(attribute_blocks) + "\n\n"
@@ -1689,10 +1689,10 @@ def _render_current_frame_overlay(frame_bytes, boxes):
     return buf.tobytes()
 
 
-def _mask_frame_to_box(frame_bytes, box):
+def _crop_frame_to_box(frame_bytes, box):
     image_array = cv2.imdecode(np.frombuffer(frame_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
     if image_array is None:
-        raise ChatbotServiceError("Failed to decode frame for selected-box masking", status_code=500)
+        raise ChatbotServiceError("Failed to decode frame for selected-box cropping", status_code=500)
 
     image_h, image_w = image_array.shape[:2]
     try:
@@ -1718,11 +1718,10 @@ def _mask_frame_to_box(frame_bytes, box):
     if x2 <= x1 or y2 <= y1:
         raise ChatbotServiceError("Selected box geometry is outside the frame", status_code=400)
 
-    masked = np.zeros_like(image_array)
-    masked[y1:y2, x1:x2] = image_array[y1:y2, x1:x2]
-    ok, buf = cv2.imencode('.jpg', masked)
+    cropped = image_array[y1:y2, x1:x2]
+    ok, buf = cv2.imencode('.jpg', cropped)
     if not ok:
-        raise ChatbotServiceError("Failed to encode selected-box masked frame", status_code=500)
+        raise ChatbotServiceError("Failed to encode selected-box cropped frame", status_code=500)
     return buf.tobytes()
 
 
@@ -1958,8 +1957,8 @@ def chatbot(current_user):
             selected_source_box = selected_source_boxes[0] if selected_source_boxes else None
             if selected_source_box is not None:
                 try:
-                    source_image_bytes = _mask_frame_to_box(source_frame_bytes, selected_source_box)
-                    source_filename = f"source_view_{source_video_index}_frame_{source_sample_index}_selected_mask.jpg"
+                    source_image_bytes = _crop_frame_to_box(source_frame_bytes, selected_source_box)
+                    source_filename = f"source_view_{source_video_index}_frame_{source_sample_index}_selected_crop.jpg"
                 except ChatbotServiceError as error:
                     return jsonify({"error": error.message}), error.status_code
         contextual_images = [{
